@@ -1,9 +1,9 @@
 # knowledge-cartography
 
-Construit une carte 2D interactive de ton graphe de connaissances personnel à
+Construit une carte 3D interactive de ton graphe de connaissances personnel à
 partir de tes exports de réseaux sociaux (posts sauvegardés/likés, pages
 suivies) et de ton historique de navigation (Chrome, YouTube, recherches
-Google, favoris). Chaque élément est transformé en embedding, projeté en 2D
+Google, favoris). Chaque élément est transformé en embedding, projeté en 3D
 (UMAP), regroupé par sujet (HDBSCAN), et étiqueté automatiquement via l'API
 Claude.
 

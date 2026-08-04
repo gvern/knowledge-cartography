@@ -45,3 +45,4 @@ class ClusteredItem(KnowledgeItem):
     cluster_label: str = ""
     x: float
     y: float
+    z: float

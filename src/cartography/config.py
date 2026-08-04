@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
-    umap_n_components: int = 2
+    umap_n_components: int = 3
     umap_random_state: int = 42
 
     hdbscan_min_cluster_size: int = 8

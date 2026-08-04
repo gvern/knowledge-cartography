@@ -21,13 +21,14 @@ def build_map(items: list[ClusteredItem], settings: Settings, output_name: str =
             "Unclustered" if cluster_id == -1 else f"Cluster {cluster_id}"
         )
         fig.add_trace(
-            go.Scattergl(
+            go.Scatter3d(
                 x=[item.x for item in cluster_items],
                 y=[item.y for item in cluster_items],
+                z=[item.z for item in cluster_items],
                 mode="markers",
                 name=f"{label} ({len(cluster_items)})",
                 marker=dict(
-                    size=4 if cluster_id == -1 else 6,
+                    size=3 if cluster_id == -1 else 4,
                     opacity=0.3 if cluster_id == -1 else 0.85,
                 ),
                 text=[_hover_text(item) for item in cluster_items],
@@ -37,8 +38,11 @@ def build_map(items: list[ClusteredItem], settings: Settings, output_name: str =
 
     fig.update_layout(
         title="Knowledge Cartography",
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        scene=dict(
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+        ),
         legend=dict(itemsizing="constant"),
         template="plotly_dark",
         width=1400,
