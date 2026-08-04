@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import logging
+
+import click
+
+from .cluster import cluster_items
+from .config import settings
+from .embed import embed_items, get_collection
+from .ingest import facebook, google, instagram
+from .ingest.enrich import enrich_items
+from .label import label_clusters
+from .viz import build_map
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+
+@click.group()
+def cli() -> None:
+    """Map your personal knowledge graph from social media exports and browsing history."""
+
+
+@cli.command()
+@click.option(
+    "--instagram",
+    "instagram_dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Instagram GDPR export directory",
+)
+@click.option(
+    "--facebook",
+    "facebook_dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Facebook GDPR export directory",
+)
+@click.option(
+    "--google",
+    "google_dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Google Takeout export directory",
+)
+@click.option(
+    "--bookmarks",
+    "bookmarks_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Browser bookmarks.html export",
+)
+@click.option(
+    "--enrich/--no-enrich",
+    default=False,
+    help="Fetch and extract full text for items that only have a URL",
+)
+def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich) -> None:
+    """Parse exports into knowledge items and embed them into the vector store."""
+    items = []
+    if instagram_dir:
+        items += instagram.parse(instagram_dir)
+    if facebook_dir:
+        items += facebook.parse(facebook_dir)
+    if google_dir:
+        items += google.parse_takeout(google_dir)
+    if bookmarks_path:
+        items += google.parse_bookmarks(bookmarks_path)
+
+    if not items:
+        raise click.UsageError("Provide at least one of --instagram, --facebook, --google, --bookmarks")
+
+    click.echo(f"Parsed {len(items)} items")
+
+    if enrich:
+        items = enrich_items(items)
+
+    embedded = embed_items(items, settings)
+    click.echo(f"Embedded {embedded} items into {settings.chroma_dir}")
+
+
+@cli.command()
+@click.option("--no-label", is_flag=True, help="Skip cluster auto-labeling via the Claude API")
+@click.option("--output", "output_name", default="knowledge_map.html", help="Output HTML filename")
+def cluster(no_label, output_name) -> None:
+    """Reduce embeddings to 2D, cluster them, and render an interactive map."""
+    items = cluster_items(settings)
+    if not no_label:
+        items = label_clusters(items, settings)
+    path = build_map(items, settings, output_name)
+    click.echo(f"Map written to {path}")
+
+
+@cli.command()
+def stats() -> None:
+    """Show basic stats about the current vector store."""
+    collection = get_collection(settings)
+    click.echo(f"{collection.count()} items in {settings.chroma_dir}")
+
+
+if __name__ == "__main__":
+    cli()
