@@ -95,10 +95,10 @@ mkdir -p ~/Library/LaunchAgents ~/Library/Logs/cartography
 cp deploy/com.gustave.knowledge-cartography.plist ~/Library/LaunchAgents/
 ```
 
-Éditer `~/Library/LaunchAgents/com.gustave.knowledge-cartography.plist` et
-remplacer les chemins `/Users/gustave/code/knowledge-cartography` et
-`/Users/gustave` par les vrais chemins sur cette machine (`whoami`, `pwd`
-dans le repo cloné).
+Le plist committé pointe déjà vers `/Users/gustavevernay/code/knowledge-cartography`
+(la config actuelle sur `gustaves-mac-mini`). Sur une autre machine/compte,
+éditer `~/Library/LaunchAgents/com.gustave.knowledge-cartography.plist` et
+adapter les chemins (`whoami`, `pwd` dans le repo cloné).
 
 ```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gustave.knowledge-cartography.plist

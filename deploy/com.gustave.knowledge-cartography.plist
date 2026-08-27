@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Nightly launchd job for knowledge-cartography, meant to run on the Mac
-  Mini. Install per docs/MACMINI_SETUP.md.
-
-  BEFORE INSTALLING: replace every /Users/gustave/code/knowledge-cartography
-  below with the actual path where you cloned this repo on the Mac Mini,
-  and /Users/gustave with that account's actual home directory.
+  Nightly launchd job for knowledge-cartography, running on
+  gustaves-mac-mini. Paths assume the repo is cloned to
+  ~/code/knowledge-cartography under the gustavevernay account — see
+  docs/MACMINI_SETUP.md for a from-scratch install on a different account.
 -->
 <plist version="1.0">
 <dict>
@@ -16,11 +14,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/gustave/code/knowledge-cartography/scripts/process_inbox.sh</string>
+        <string>/Users/gustavevernay/code/knowledge-cartography/scripts/process_inbox.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/gustave/code/knowledge-cartography</string>
+    <string>/Users/gustavevernay/code/knowledge-cartography</string>
 
     <!-- Nightly at 03:00, per docs/ARCHITECTURE.md's "planning nocturne". -->
     <key>StartCalendarInterval</key>
@@ -32,9 +30,9 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/gustave/Library/Logs/cartography/launchd.out.log</string>
+    <string>/Users/gustavevernay/Library/Logs/cartography/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/gustave/Library/Logs/cartography/launchd.err.log</string>
+    <string>/Users/gustavevernay/Library/Logs/cartography/launchd.err.log</string>
 
     <!-- Don't run immediately on every load/login — only on schedule. -->
     <key>RunAtLoad</key>
