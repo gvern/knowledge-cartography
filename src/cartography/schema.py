@@ -32,6 +32,7 @@ class KnowledgeItem(BaseModel):
     content: str = ""
     url: str | None = None
     timestamp: datetime | None = None
+    collections: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property

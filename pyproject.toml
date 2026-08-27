@@ -25,6 +25,13 @@ dependencies = [
 local = ["ollama>=0.3"]
 vertex = ["google-cloud-aiplatform>=1.60"]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
+    "mypy>=1.11",
+]
+
 [project.scripts]
 cartography = "cartography.cli:cli"
 
@@ -34,3 +41,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cartography"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

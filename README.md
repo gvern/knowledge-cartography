@@ -68,3 +68,8 @@ informations" (format JSON), et l'export Google via
 Le format de l'export Facebook varie selon les versions ; `ingest/facebook.py`
 essaie plusieurs noms de fichiers connus et ignore silencieusement ceux qui
 manquent.
+
+## Architecture de déploiement
+
+Pour faire tourner le pipeline en continu sur une infra perso (Mac Mini +
+NAS + Tailscale), voir [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

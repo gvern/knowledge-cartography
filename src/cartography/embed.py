@@ -59,7 +59,9 @@ def get_collection(settings: Settings):
     return client.get_or_create_collection("knowledge_items")
 
 
-def embed_items(items: list[KnowledgeItem], settings: Settings, batch_size: int = 32) -> int:
+def embed_items(
+    items: list[KnowledgeItem], settings: Settings, batch_size: int = 32, skip_existing: bool = False
+) -> int:
     settings.ensure_dirs()
     embedder = get_embedder(settings)
     collection = get_collection(settings)
@@ -68,6 +70,13 @@ def embed_items(items: list[KnowledgeItem], settings: Settings, batch_size: int 
     skipped = len(items) - len(items_by_id)
     if skipped:
         logger.info("Skipping %d items with no embeddable text", skipped)
+
+    if skip_existing:
+        already = _existing_ids(collection) & items_by_id.keys()
+        if already:
+            logger.info("Skipping %d items already embedded (resuming)", len(already))
+            for item_id in already:
+                del items_by_id[item_id]
 
     ids = list(items_by_id)
     embedded = 0
@@ -84,6 +93,20 @@ def embed_items(items: list[KnowledgeItem], settings: Settings, batch_size: int 
     return embedded
 
 
+def _existing_ids(collection, batch_size: int = 1000) -> set[str]:
+    """Paginated id fetch — an unbounded get() on a large collection can exceed
+    SQLite's bound-variable limit (same failure mode fixed in cluster.py)."""
+    total = collection.count()
+    ids: set[str] = set()
+    for offset in range(0, total, batch_size):
+        result = collection.get(limit=batch_size, offset=offset)
+        ids.update(result["ids"])
+    return ids
+
+
+_COLLECTIONS_SEP = "||"
+
+
 def _item_metadata(item: KnowledgeItem) -> dict:
     return {
         "source": item.source.value,
@@ -91,4 +114,6 @@ def _item_metadata(item: KnowledgeItem) -> dict:
         "title": item.title,
         "url": item.url or "",
         "timestamp": item.timestamp.isoformat() if item.timestamp else "",
+        # Chroma metadata values must be scalar — collections is a list, so join it.
+        "collections": _COLLECTIONS_SEP.join(item.collections),
     }

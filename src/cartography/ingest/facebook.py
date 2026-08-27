@@ -5,6 +5,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from bs4 import BeautifulSoup
 
 from ..schema import ItemType, KnowledgeItem, SourcePlatform
 from .util import make_id
@@ -13,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 def parse(export_dir: str | Path) -> list[KnowledgeItem]:
-    """Parse a Facebook "Download Your Information" (GDPR) JSON export.
+    """Parse a Facebook "Download Your Information" (GDPR) export.
 
-    Facebook has changed this export's exact file names and key shapes across
-    versions, so this looks for a few known variants and degrades gracefully
-    if a file or field is missing rather than failing the whole ingest.
+    Facebook has changed this export's exact file names, key shapes, and even
+    format (JSON vs HTML, depending on what you requested) across versions, so
+    this looks for a few known variants and degrades gracefully if a file or
+    field is missing rather than failing the whole ingest.
     """
     export_dir = Path(export_dir)
     items: list[KnowledgeItem] = []
@@ -26,6 +30,10 @@ def parse(export_dir: str | Path) -> list[KnowledgeItem]:
         items += _parse_saved(path)
     for path in _find(export_dir, "pages_you_follow.json", "your_followed_pages.json", "followed_pages.json"):
         items += _parse_followed(path)
+    for path in _find(export_dir, "your_saved_items.html"):
+        items += _parse_saved_html(path)
+    for path in _find(export_dir, "pages_and_profiles_you_follow.html"):
+        items += _parse_followed_html(path)
 
     logger.info("Parsed %d Facebook items from %s", len(items), export_dir)
     return items
@@ -95,3 +103,57 @@ def _to_datetime(ts: int | None) -> datetime | None:
 def _load_json(path: Path) -> dict:
     with path.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+def _parse_saved_html(path: Path) -> list[KnowledgeItem]:
+    soup = BeautifulSoup(path.read_text(encoding="utf-8", errors="ignore"), "html.parser")
+    items = []
+    for section in soup.find_all("section", class_="_a6-g"):
+        heading = section.find("h2")
+        title = heading.get_text(strip=True) if heading else ""
+        link = section.find("a", href=True)
+        href = link["href"] if link else None
+        url = _unwrap_redirect(href) if isinstance(href, str) else None
+        content = section.get_text(" ", strip=True)
+        if not title and not content:
+            continue
+        items.append(
+            KnowledgeItem(
+                id=make_id("facebook", "saved", url or title),
+                source=SourcePlatform.FACEBOOK,
+                item_type=ItemType.SAVED_POST,
+                title=title,
+                content=content,
+                url=url,
+            )
+        )
+    return items
+
+
+def _parse_followed_html(path: Path) -> list[KnowledgeItem]:
+    soup = BeautifulSoup(path.read_text(encoding="utf-8", errors="ignore"), "html.parser")
+    items = []
+    for section in soup.find_all("section", class_="_a6-g"):
+        heading = section.find("h2")
+        title = heading.get_text(strip=True) if heading else ""
+        if not title:
+            continue
+        items.append(
+            KnowledgeItem(
+                id=make_id("facebook", "followed", title),
+                source=SourcePlatform.FACEBOOK,
+                item_type=ItemType.FOLLOWED_PAGE,
+                title=title,
+            )
+        )
+    return items
+
+
+def _unwrap_redirect(href: str) -> str:
+    """Facebook wraps outbound links in the export as /dyi/l/?l=<real url>&s=...; unwrap it."""
+    parsed = urlparse(href)
+    if parsed.path == "/dyi/l/":
+        real_url = parse_qs(parsed.query).get("l")
+        if real_url:
+            return real_url[0]
+    return href

@@ -10,5 +10,6 @@ build/
 # runtime data, not source
 /data/
 /output/
+/google takeout/
 
 .DS_Store

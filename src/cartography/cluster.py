@@ -1,23 +1,48 @@
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import hdbscan
 import numpy as np
 import umap
 
 from .config import Settings
-from .embed import get_collection
+from .embed import _COLLECTIONS_SEP, get_collection
 from .schema import ClusteredItem, ItemType, SourcePlatform
 
 logger = logging.getLogger(__name__)
 
+_CACHE_FILENAME = ".cluster_cache.json"
 
-def load_embeddings(settings: Settings):
+
+def load_embeddings(settings: Settings, batch_size: int = 1000):
+    """Page through the collection instead of a single unbounded get().
+
+    ChromaDB's SQLite backend binds one query variable per cell fetched, and a
+    single get() over a large collection (hundreds of thousands of items) can
+    exceed SQLite's bound-variable limit and fail with an internal error.
+    """
     collection = get_collection(settings)
-    result = collection.get(include=["embeddings", "documents", "metadatas"])
-    embeddings = np.array(result["embeddings"]) if result["embeddings"] is not None else np.empty((0, 0))
-    return result["ids"], embeddings, result["documents"], result["metadatas"]
+    total = collection.count()
+
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict] = []
+    embeddings: list[list[float]] = []
+    for offset in range(0, total, batch_size):
+        result = collection.get(
+            include=["embeddings", "documents", "metadatas"], limit=batch_size, offset=offset
+        )
+        ids.extend(result["ids"])
+        documents.extend(result["documents"])
+        metadatas.extend(result["metadatas"])
+        if result["embeddings"] is not None:
+            embeddings.extend(result["embeddings"])
+
+    embeddings_arr = np.array(embeddings) if embeddings else np.empty((0, 0))
+    return ids, embeddings_arr, documents, metadatas
 
 
 def cluster_items(settings: Settings) -> list[ClusteredItem]:
@@ -42,7 +67,10 @@ def cluster_items(settings: Settings) -> list[ClusteredItem]:
     labels = clusterer.fit_predict(coords)
 
     items = []
-    for item_id, coord, label, document, metadata in zip(ids, coords, labels, documents, metadatas):
+    for item_id, coord, label, document, metadata in zip(
+        ids, coords, labels, documents, metadatas, strict=True
+    ):
+        collections_raw = metadata.get("collections") or ""
         items.append(
             ClusteredItem(
                 id=item_id,
@@ -52,6 +80,7 @@ def cluster_items(settings: Settings) -> list[ClusteredItem]:
                 content=document or "",
                 url=metadata.get("url") or None,
                 timestamp=metadata.get("timestamp") or None,
+                collections=collections_raw.split(_COLLECTIONS_SEP) if collections_raw else [],
                 cluster_id=int(label),
                 x=float(coord[0]),
                 y=float(coord[1]),
@@ -61,4 +90,28 @@ def cluster_items(settings: Settings) -> list[ClusteredItem]:
     n_clusters = len({item.cluster_id for item in items if item.cluster_id != -1})
     n_unclustered = sum(1 for item in items if item.cluster_id == -1)
     logger.info("Found %d clusters (%d unclustered items)", n_clusters, n_unclustered)
+    return items
+
+
+def _cache_path(settings: Settings) -> Path:
+    return settings.output_dir / _CACHE_FILENAME
+
+
+def save_cluster_cache(items: list[ClusteredItem], settings: Settings) -> None:
+    """Persist the UMAP/HDBSCAN/labeling result so viz-only iterations can skip
+    straight to rendering instead of recomputing (UMAP alone takes minutes at
+    this dataset's scale)."""
+    settings.ensure_dirs()
+    payload = [item.model_dump(mode="json") for item in items]
+    _cache_path(settings).write_text(json.dumps(payload), encoding="utf-8")
+    logger.info("Cached %d clustered items to %s", len(items), _cache_path(settings))
+
+
+def load_cluster_cache(settings: Settings) -> list[ClusteredItem] | None:
+    path = _cache_path(settings)
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    items = [ClusteredItem.model_validate(entry) for entry in payload]
+    logger.info("Loaded %d clustered items from cache %s", len(items), path)
     return items

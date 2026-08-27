@@ -4,7 +4,7 @@ import logging
 
 import click
 
-from .cluster import cluster_items
+from .cluster import cluster_items, load_cluster_cache, save_cluster_cache
 from .config import settings
 from .embed import embed_items, get_collection
 from .ingest import facebook, google, instagram
@@ -51,7 +51,12 @@ def cli() -> None:
     default=False,
     help="Fetch and extract full text for items that only have a URL",
 )
-def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich) -> None:
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Skip items already embedded from a previous run (for resuming an interrupted ingest)",
+)
+def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich, resume) -> None:
     """Parse exports into knowledge items and embed them into the vector store."""
     items = []
     if instagram_dir:
@@ -71,18 +76,29 @@ def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich) -> N
     if enrich:
         items = enrich_items(items)
 
-    embedded = embed_items(items, settings)
+    embedded = embed_items(items, settings, skip_existing=resume)
     click.echo(f"Embedded {embedded} items into {settings.chroma_dir}")
 
 
 @cli.command()
 @click.option("--no-label", is_flag=True, help="Skip cluster auto-labeling via the Claude API")
 @click.option("--output", "output_name", default="knowledge_map.html", help="Output HTML filename")
-def cluster(no_label, output_name) -> None:
+@click.option(
+    "--from-cache",
+    is_flag=True,
+    help="Skip UMAP/HDBSCAN/labeling and re-render from the previous run's cached result "
+    "(fast — for iterating on the map's HTML/JS only)",
+)
+def cluster(no_label, output_name, from_cache) -> None:
     """Reduce embeddings to 2D, cluster them, and render an interactive map."""
-    items = cluster_items(settings)
-    if not no_label:
-        items = label_clusters(items, settings)
+    items = load_cluster_cache(settings) if from_cache else None
+    if items is None:
+        if from_cache:
+            click.echo("No cache found, computing from scratch")
+        items = cluster_items(settings)
+        if not no_label:
+            items = label_clusters(items, settings)
+        save_cluster_cache(items, settings)
     path = build_map(items, settings, output_name)
     click.echo(f"Map written to {path}")
 

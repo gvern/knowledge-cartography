@@ -63,10 +63,17 @@ def _label_one(
     try:
         response = client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=20,
+            max_tokens=30,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": prompt}],
         )
-        label = response.content[0].text.strip()
+        text_block = next(
+            (block for block in response.content if isinstance(block, anthropic.types.TextBlock)), None
+        )
+        if text_block is None:
+            block_types = [type(block).__name__ for block in response.content]
+            raise TypeError(f"No text block in response content: {block_types}")
+        label = text_block.text.strip()
     except Exception:
         logger.exception("Failed to label cluster %d", cluster_id)
         return f"Cluster {cluster_id}"

@@ -30,16 +30,27 @@ def parse_takeout(takeout_dir: str | Path) -> list[KnowledgeItem]:
 
 
 def parse_bookmarks(bookmarks_path: str | Path) -> list[KnowledgeItem]:
-    """Parse a Netscape-format bookmarks.html export (Chrome, Firefox, Safari)."""
+    """Parse a Netscape-format bookmarks.html export (Chrome, Firefox, Safari).
+
+    The enclosing bookmark folder (the nearest preceding <H3>) is captured as the
+    item's collection — Netscape bookmark HTML is loosely structured (unclosed <DT>/<P>
+    tags), so rather than relying on exact DOM nesting, this walks backward in document
+    order, which is reliable regardless of how the parser resolved the nesting.
+    """
     bookmarks_path = Path(bookmarks_path)
     soup = BeautifulSoup(bookmarks_path.read_text(encoding="utf-8", errors="ignore"), "html.parser")
 
     items = []
     for link in soup.find_all("a"):
         href = link.get("href")
-        if not href or not href.startswith("http"):
+        if not isinstance(href, str) or not href.startswith("http"):
             continue
         add_date = link.get("add_date")
+        timestamp = (
+            _from_epoch_seconds(int(add_date)) if isinstance(add_date, str) and add_date.isdigit() else None
+        )
+        folder = link.find_previous("h3")
+        collections = [folder.get_text(strip=True)] if folder else []
         items.append(
             KnowledgeItem(
                 id=make_id("bookmark", href),
@@ -47,7 +58,8 @@ def parse_bookmarks(bookmarks_path: str | Path) -> list[KnowledgeItem]:
                 item_type=ItemType.BOOKMARK,
                 title=link.get_text(strip=True),
                 url=href,
-                timestamp=_from_epoch_seconds(int(add_date)) if add_date and add_date.isdigit() else None,
+                timestamp=timestamp,
+                collections=collections,
             )
         )
 
