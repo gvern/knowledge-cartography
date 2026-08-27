@@ -113,15 +113,42 @@ launchctl kickstart -k gui/$(id -u)/com.gustave.knowledge-cartography
 tail -f ~/Library/Logs/cartography/inbox.log
 ```
 
-## 7. Désinstaller / mettre à jour
+## 7. Consulter la carte depuis le tailnet (Tailscale Serve)
+
+Le variant macOS de Tailscale (App Store, sandboxé) ne peut pas servir un
+dossier directement — `tailscale serve <dossier>` échoue avec "Path serving
+is not supported on macOS due to sandbox restrictions". Et les LaunchAgents
+n'arrivent pas à lire le mount SMB du NAS (404, alors que la même commande
+marche en shell interactif — restriction sandbox propre aux agents en
+arrière-plan sur volumes réseau). Solution : un petit serveur HTTP local qui
+sert un miroir local de la carte, que Tailscale proxifie.
+
+`scripts/process_inbox.sh` resynchronise déjà `CARTOGRAPHY_OUTPUT_DIR` (NAS)
+vers `~/.cartography/serve/` (disque local) après chaque `cartography
+cluster`. Il reste à installer le serveur et le proxy :
+
+```bash
+mkdir -p ~/.cartography/serve
+cp ~/code/knowledge-cartography/deploy/com.gustave.knowledge-cartography-webserver.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gustave.knowledge-cartography-webserver.plist
+```
+
+Puis, une fois (le réglage est persistant, pas besoin de le refaire à chaque
+redémarrage) — nécessite que "Serve" soit activé sur le tailnet dans la
+console d'admin Tailscale (un lien s'affiche si ce n'est pas encore fait) :
+
+```bash
+/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg 8642
+```
+
+La carte est alors accessible sur tout le tailnet (téléphone inclus) à
+`https://gustaves-mac-mini.tail877df4.ts.net/`. Le premier chargement peut
+être lent (provisioning du certificat HTTPS), les suivants sont instantanés.
+
+## 8. Désinstaller / mettre à jour
 
 ```bash
 launchctl bootout gui/$(id -u)/com.gustave.knowledge-cartography
-# puis re-copier le plist modifié et refaire `launchctl bootstrap`
+launchctl bootout gui/$(id -u)/com.gustave.knowledge-cartography-webserver
+# puis re-copier le(s) plist modifié(s) et refaire `launchctl bootstrap`
 ```
-
-## Prochaine étape
-
-Servir `CARTOGRAPHY_OUTPUT_DIR` via Tailscale Serve pour consulter la carte
-depuis le téléphone sans montage SMB — voir la case correspondante dans
-[ARCHITECTURE.md](ARCHITECTURE.md), pas encore fait.

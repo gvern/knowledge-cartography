@@ -105,6 +105,15 @@ if ! uv run cartography cluster >>"$LOG_FILE" 2>&1; then
     exit 1
 fi
 
+# Mirror the map to local disk for serving. LaunchAgents can't reliably read
+# the NAS SMB mount (works fine in an interactive shell, 404s under launchd —
+# a macOS sandboxing quirk), so com.gustave.knowledge-cartography-webserver
+# serves this local copy instead of the NAS path directly.
+LOCAL_SERVE_DIR="${CARTOGRAPHY_LOCAL_SERVE_DIR:-$HOME/.cartography/serve}"
+mkdir -p "$LOCAL_SERVE_DIR"
+rsync -a --delete "$CARTOGRAPHY_OUTPUT_DIR/" "$LOCAL_SERVE_DIR/"
+log "INFO: mirrored map to $LOCAL_SERVE_DIR for local serving"
+
 TS="$(date '+%Y%m%d-%H%M%S')"
 for f in "${MOVED[@]}"; do
     dest_dir="$PROCESSED_DIR/$(basename "$(dirname "$f")")"

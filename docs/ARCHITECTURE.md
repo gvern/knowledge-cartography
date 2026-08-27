@@ -96,6 +96,19 @@ clusters). Ce comportement ne doit pas changer implicitement.
       3h. NAS monté sur `/Volumes/NAS-UGREEN`, données sous
       `Projets/knowledge-cartography/{inbox,chroma,output}`. Voir
       [docs/MACMINI_SETUP.md](MACMINI_SETUP.md)
+- [x] Config Tailscale Serve/MagicDNS pour consulter la carte depuis le
+      tailnet — la carte est servie sur
+      `https://gustaves-mac-mini.tail877df4.ts.net/`. Le variant macOS de
+      Tailscale (App Store, sandboxé) ne peut pas servir un dossier
+      directement (`tailscale serve <dossier>` échoue avec "Path serving is
+      not supported on macOS due to sandbox restrictions") ; on proxy donc
+      vers un `python3 -m http.server` local (`com.gustave.knowledge-cartography-webserver`,
+      port 8642, bind 127.0.0.1) qui sert un miroir local
+      (`~/.cartography/serve/`) plutôt que le mount NAS directement — les
+      LaunchAgents obtiennent un 404 en lisant le mount SMB (alors que la
+      même commande marche en shell interactif, restriction sandbox macOS
+      propre aux agents en arrière-plan sur volumes réseau).
+      `scripts/process_inbox.sh` resynchronise ce miroir après chaque
+      `cartography cluster`. Voir [docs/MACMINI_SETUP.md](MACMINI_SETUP.md).
 - [ ] Module `ingest/messenger.py` pour parser `your_facebook_activity/messages/`
-- [ ] Config Tailscale Serve/MagicDNS pour consulter la carte depuis le tailnet
 - [ ] Décision explicite sur le traitement des messages (labeling cloud ou non)
