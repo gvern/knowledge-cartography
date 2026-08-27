@@ -7,7 +7,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from .config import Settings
-from .schema import KnowledgeItem
+from .schema import KnowledgeItem, SourcePlatform
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,6 @@ def embed_items(
     items: list[KnowledgeItem], settings: Settings, batch_size: int = 32, skip_existing: bool = False
 ) -> int:
     settings.ensure_dirs()
-    embedder = get_embedder(settings)
     collection = get_collection(settings)
 
     items_by_id = {item.id: item for item in items if item.text}
@@ -78,7 +77,35 @@ def embed_items(
             for item_id in already:
                 del items_by_id[item_id]
 
-    ids = list(items_by_id)
+    # Messenger content is private conversation, often with people who never
+    # consented to being indexed — it never leaves the machine, regardless of
+    # which embedding provider is configured for everything else.
+    local_only_ids = [i for i, item in items_by_id.items() if item.source == SourcePlatform.MESSENGER]
+    local_only_set = set(local_only_ids)
+    other_ids = [i for i in items_by_id if i not in local_only_set]
+
+    embedded = 0
+    if other_ids:
+        embedded += _embed_batch(other_ids, items_by_id, get_embedder(settings), collection, batch_size)
+    if local_only_ids:
+        if settings.embedding_provider == "ollama":
+            local_embedder: Embedder = get_embedder(settings)
+        else:
+            logger.info(
+                "Embedding %d Messenger item(s) locally via Ollama regardless of "
+                "provider=%s (privacy policy — see docs/ARCHITECTURE.md)",
+                len(local_only_ids),
+                settings.embedding_provider,
+            )
+            local_embedder = OllamaEmbedder(settings.ollama_model, settings.ollama_host)
+        embedded += _embed_batch(local_only_ids, items_by_id, local_embedder, collection, batch_size)
+
+    return embedded
+
+
+def _embed_batch(
+    ids: list[str], items_by_id: dict[str, KnowledgeItem], embedder: Embedder, collection, batch_size: int
+) -> int:
     embedded = 0
     for start in range(0, len(ids), batch_size):
         batch_ids = ids[start : start + batch_size]
@@ -89,7 +116,6 @@ def embed_items(
         collection.upsert(ids=batch_ids, embeddings=vectors, documents=batch_texts, metadatas=metadatas)
         embedded += len(batch_ids)
         logger.info("Embedded %d/%d items", embedded, len(ids))
-
     return embedded
 
 

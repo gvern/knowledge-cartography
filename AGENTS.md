@@ -43,8 +43,9 @@ src/cartography/
 └── ingest/
     ├── instagram.py           # saved/liked posts (GDPR JSON export)
     ├── facebook.py              # saved items + followed pages (GDPR JSON, format varies by version)
-    ├── google.py                  # Chrome/YouTube/search history + Netscape bookmarks.html
-    └── enrich.py                    # URL content fetch (trafilatura)
+    ├── messenger.py               # Messenger threads (opt-in, 100% local — never cloud-labeled)
+    ├── google.py                    # Chrome/YouTube/search history + Netscape bookmarks.html
+    └── enrich.py                      # URL content fetch (trafilatura)
 tests/                                # mirrors src/, one test module per ingest source
 ```
 
@@ -58,3 +59,9 @@ tests/                                # mirrors src/, one test module per ingest
   mirroring `test_ingest_instagram.py`.
 - Raw personal export data belongs in `/data` (gitignored) or a NAS mount —
   never commit it.
+- `SourcePlatform.MESSENGER` items are private-by-policy: `embed.py` always
+  routes them through Ollama regardless of the configured embedding
+  provider, and `label.py` never includes their text in a cluster-labeling
+  API call, even in a cluster mixed with non-Messenger items. If you add
+  another sensitive source (e.g. iMessage/WhatsApp), give it the same
+  treatment rather than a one-off — see docs/ARCHITECTURE.md.

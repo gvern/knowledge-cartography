@@ -7,7 +7,7 @@ import click
 from .cluster import cluster_items, load_cluster_cache, save_cluster_cache
 from .config import settings
 from .embed import embed_items, get_collection
-from .ingest import facebook, google, instagram
+from .ingest import facebook, google, instagram, messenger
 from .ingest.enrich import enrich_items
 from .label import label_clusters
 from .viz import build_map
@@ -41,6 +41,13 @@ def cli() -> None:
     help="Google Takeout export directory",
 )
 @click.option(
+    "--messenger",
+    "messenger_dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Facebook export directory containing Messenger threads (opt-in; always embedded "
+    "locally via Ollama and never sent to the Claude API for labeling, see docs/ARCHITECTURE.md)",
+)
+@click.option(
     "--bookmarks",
     "bookmarks_path",
     type=click.Path(exists=True, dir_okay=False),
@@ -56,7 +63,7 @@ def cli() -> None:
     is_flag=True,
     help="Skip items already embedded from a previous run (for resuming an interrupted ingest)",
 )
-def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich, resume) -> None:
+def ingest(instagram_dir, facebook_dir, google_dir, messenger_dir, bookmarks_path, enrich, resume) -> None:
     """Parse exports into knowledge items and embed them into the vector store."""
     items = []
     if instagram_dir:
@@ -65,11 +72,15 @@ def ingest(instagram_dir, facebook_dir, google_dir, bookmarks_path, enrich, resu
         items += facebook.parse(facebook_dir)
     if google_dir:
         items += google.parse_takeout(google_dir)
+    if messenger_dir:
+        items += messenger.parse(messenger_dir)
     if bookmarks_path:
         items += google.parse_bookmarks(bookmarks_path)
 
     if not items:
-        raise click.UsageError("Provide at least one of --instagram, --facebook, --google, --bookmarks")
+        raise click.UsageError(
+            "Provide at least one of --instagram, --facebook, --google, --messenger, --bookmarks"
+        )
 
     click.echo(f"Parsed {len(items)} items")
 

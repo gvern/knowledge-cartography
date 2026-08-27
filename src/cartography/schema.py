@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class SourcePlatform(str, Enum):
     INSTAGRAM = "instagram"
     FACEBOOK = "facebook"
+    MESSENGER = "messenger"
     GOOGLE_SEARCH = "google_search"
     CHROME_HISTORY = "chrome_history"
     YOUTUBE = "youtube"
@@ -22,6 +23,7 @@ class ItemType(str, Enum):
     PAGE_VISIT = "page_visit"
     VIDEO_WATCH = "video_watch"
     BOOKMARK = "bookmark"
+    MESSAGE = "message"
 
 
 class KnowledgeItem(BaseModel):

@@ -55,7 +55,7 @@ précédent ne duplique rien.
 | Facebook (saved/pages suivies) | ✅ fait | HTML | Manuelle, demande périodique |
 | Google Takeout (Chrome, YouTube, recherche) | Code prêt, jamais testé sur données réelles | JSON | Manuelle (Takeout) |
 | Bookmarks navigateur | Code prêt | HTML Netscape | Export manuel ponctuel |
-| Messages (Messenger) | ❌ absent | Le zip Facebook contient déjà `your_facebook_activity/messages/...` (threads, photos, gifs) | À construire |
+| Messages (Messenger) | ✅ fait, 100% local | `your_facebook_activity/messages/{inbox,archived_threads,filtered_threads}/*/message_*.json` | Manuelle (export GDPR), `--messenger <dir>` |
 | WhatsApp / iMessage | ❌ absent | Export possible (WhatsApp : chat export .txt/.zip ; iMessage : `~/Library/Messages/chat.db` en local sur le Mac) | Optionnel, à évaluer |
 
 Pour les messages : c'est la source la plus sensible (conversations privées,
@@ -80,12 +80,22 @@ sur une machine qu'on contrôle.
 
 ## Point d'attention : labeling cloud vs contenu privé
 
+Décision prise et implémentée : les messages Messenger (`ingest/messenger.py`)
+sont **100% locaux**, structurellement, pas juste par convention :
+
+- `embed.py` route tout item `source == MESSENGER` vers `OllamaEmbedder`,
+  quel que soit `CARTOGRAPHY_EMBEDDING_PROVIDER` configuré globalement (utile
+  si Vertex AI est activé pour le reste un jour).
+- `label.py` exclut les items Messenger de l'échantillon envoyé à l'API
+  Claude pour nommer un cluster — même dans un cluster mixte (messages +
+  items publics), seul le texte non-Messenger part vers l'API. Un cluster
+  100% Messenger n'appelle jamais l'API et retombe sur un label générique
+  (`Cluster N`).
+
 Le label des clusters passe par l'API Claude (`label.py`) — seul un
-échantillon de texte par cluster est envoyé, pas les items bruts. Mais si des
-messages privés entrent un jour dans le pipeline, il faut décider
-explicitement s'ils participent au labeling cloud ou restent 100% local
-(embeddings Ollama uniquement, labeling désactivé ou fait localement pour ces
-clusters). Ce comportement ne doit pas changer implicitement.
+échantillon de texte par cluster est envoyé, pas les items bruts. Ce
+comportement (Messenger = jamais envoyé à l'API, quel que soit le contexte)
+ne doit pas changer implicitement.
 
 ## Prochaines étapes
 
@@ -110,5 +120,9 @@ clusters). Ce comportement ne doit pas changer implicitement.
       propre aux agents en arrière-plan sur volumes réseau).
       `scripts/process_inbox.sh` resynchronise ce miroir après chaque
       `cartography cluster`. Voir [docs/MACMINI_SETUP.md](MACMINI_SETUP.md).
-- [ ] Module `ingest/messenger.py` pour parser `your_facebook_activity/messages/`
-- [ ] Décision explicite sur le traitement des messages (labeling cloud ou non)
+- [x] Module `ingest/messenger.py` pour parser `your_facebook_activity/messages/`
+      — un item par message texte (skip pièces jointes seules et messages
+      supprimés), correctif du bug d'encodage mojibake de l'export Facebook.
+      `cartography ingest --messenger <dir>`.
+- [x] Décision explicite sur le traitement des messages : **100% local**.
+      Voir "Point d'attention : labeling cloud vs contenu privé" ci-dessus.

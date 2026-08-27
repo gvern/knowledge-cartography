@@ -21,8 +21,9 @@ src/cartography/
 └── ingest/
     ├── instagram.py        # posts sauvegardés/likés (export GDPR JSON)
     ├── facebook.py           # éléments sauvegardés + pages suivies
-    ├── google.py              # historique Chrome/YouTube/recherche + favoris
-    └── enrich.py               # récupération du contenu des URLs (trafilatura)
+    ├── messenger.py            # messages Messenger (opt-in, 100% local)
+    ├── google.py                 # historique Chrome/YouTube/recherche + favoris
+    └── enrich.py                   # récupération du contenu des URLs (trafilatura)
 ```
 
 ## Installation
@@ -53,6 +54,11 @@ cartography ingest \
   --facebook ~/data/facebook \
   --google ~/data/takeout \
   --bookmarks ~/data/bookmarks.html
+
+# Messenger (optionnel) : contenu privé, jamais envoyé à l'API Claude pour le
+# labeling, toujours embeddé localement via Ollama quel que soit le provider
+# configuré — voir docs/ARCHITECTURE.md
+cartography ingest --messenger ~/data/facebook
 
 # Clustering + génération de la carte
 cartography cluster

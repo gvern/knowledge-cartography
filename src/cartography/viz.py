@@ -29,6 +29,7 @@ _HAIRLINE = "#2c2c2a"
 _PLATFORM_COLORS: dict[SourcePlatform, str] = {
     SourcePlatform.INSTAGRAM: "#3987e5",  # slot 1 blue
     SourcePlatform.FACEBOOK: "#d95926",  # slot 2 orange
+    SourcePlatform.MESSENGER: "#d95926",  # same Meta family as Facebook — no 4th hue, see comment above
     SourcePlatform.GOOGLE_SEARCH: "#199e70",  # slot 3 aqua
     SourcePlatform.YOUTUBE: "#199e70",
     SourcePlatform.CHROME_HISTORY: "#199e70",

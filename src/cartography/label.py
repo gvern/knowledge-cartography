@@ -6,7 +6,7 @@ from collections import defaultdict
 import anthropic
 
 from .config import Settings
-from .schema import ClusteredItem
+from .schema import ClusteredItem, SourcePlatform
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,12 @@ def _label_one(
     cluster_items: list[ClusteredItem],
     samples_per_cluster: int,
 ) -> str:
-    sample_texts = [item.text for item in cluster_items[:samples_per_cluster] if item.text]
+    # Messenger content never leaves the machine — not even a sample of it,
+    # even when it shares a cluster with non-sensitive items. A cluster made
+    # up entirely of Messenger items ends up with no safe samples below, and
+    # falls back to a generic label rather than calling the API at all.
+    safe_items = [item for item in cluster_items if item.source != SourcePlatform.MESSENGER]
+    sample_texts = [item.text for item in safe_items[:samples_per_cluster] if item.text]
     if not sample_texts:
         return f"Cluster {cluster_id}"
 
