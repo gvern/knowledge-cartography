@@ -19,6 +19,9 @@ dependencies = [
     "requests>=2.31",
     "anthropic>=0.34",
     "beautifulsoup4>=4.12",
+    # chromadb pulls in onnxruntime; 1.24+ dropped cp310 wheels, so pin below
+    # that for the 3.10 branch (still on our supported/CI-tested range).
+    "onnxruntime<1.24; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
