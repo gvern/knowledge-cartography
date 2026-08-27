@@ -9,7 +9,7 @@ Claude.
 
 ## Structure
 
-```
+```text
 src/cartography/
 ├── cli.py          # entrypoint click (ingest/cluster/stats)
 ├── config.py        # chemins, provider d'embeddings, paramètres UMAP/HDBSCAN

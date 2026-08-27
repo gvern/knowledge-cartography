@@ -80,3 +80,77 @@ def test_parse_merges_multiple_message_files_in_same_thread(tmp_path):
 
 def test_parse_ignores_missing_files(tmp_path):
     assert messenger.parse(tmp_path) == []
+
+
+def _html_thread(tmp_path, sections_html, title="Aliénor Ddr", thread_dir="alienorddr_10204790991968331"):
+    thread_path = tmp_path / "your_facebook_activity" / "messages" / "inbox" / thread_dir
+    thread_path.mkdir(parents=True)
+    html = (
+        "<html><body>"
+        f'<header><div class="_a70d"><h1>{title}</h1></div></header>'
+        f"<main>{sections_html}</main>"
+        "</body></html>"
+    )
+    (thread_path / "message_1.html").write_text(html, encoding="utf-8")
+
+
+def test_parse_html_text_message(tmp_path):
+    _html_thread(
+        tmp_path,
+        '<section class="_a6-g"><h2 class="_a6-h">Gustave Vernay</h2>'
+        '<div class="_2ph_ _a6-p"><div>Merci beaucoup !</div></div>'
+        '<footer><div class="_a72d">juil 13, 2021 10:58:25 am</div></footer></section>',
+    )
+
+    items = messenger.parse(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].content == "Merci beaucoup !"
+    assert items[0].metadata["sender"] == "Gustave Vernay"
+    assert items[0].metadata["thread"] == "Aliénor Ddr"
+    assert items[0].timestamp is None
+
+
+def test_parse_html_carries_sender_forward_when_heading_omitted(tmp_path):
+    _html_thread(
+        tmp_path,
+        '<section class="_a6-g"><h2 class="_a6-h">Aliénor Ddr</h2>'
+        '<div class="_2ph_ _a6-p"><div>Premier message</div></div>'
+        '<footer><div class="_a72d">t1</div></footer></section>'
+        '<section class="_a6-g">'
+        '<div class="_2ph_ _a6-p"><div>Deuxième message</div></div>'
+        '<footer><div class="_a72d">t2</div></footer></section>',
+    )
+
+    items = messenger.parse(tmp_path)
+
+    assert [item.metadata["sender"] for item in items] == ["Aliénor Ddr", "Aliénor Ddr"]
+
+
+def test_parse_html_skips_attachment_only_messages(tmp_path):
+    _html_thread(
+        tmp_path,
+        '<section class="_a6-g"><h2 class="_a6-h">Gustave Vernay</h2>'
+        '<div class="_2ph_ _a6-p"><div><div></div><div></div><div></div><div></div>'
+        '<div><div><a href="x.png"><img src="x.png" /></a></div></div></div></div>'
+        '<footer><div class="_a72d">t1</div></footer></section>',
+    )
+
+    items = messenger.parse(tmp_path)
+
+    assert items == []
+
+
+def test_parse_html_strips_reactions_from_content(tmp_path):
+    _html_thread(
+        tmp_path,
+        '<section class="_a6-g"><h2 class="_a6-h">Gustave Vernay</h2>'
+        '<div class="_2ph_ _a6-p"><div><div></div><div>peut être oui</div><div></div><div></div>'
+        '<div><ul class="_a6-q"><li><span>\U0001f44dAliénor Ddr</span></li></ul></div></div></div>'
+        '<footer><div class="_a72d">t1</div></footer></section>',
+    )
+
+    items = messenger.parse(tmp_path)
+
+    assert len(items) == 1
+    assert items[0].content == "peut être oui"
