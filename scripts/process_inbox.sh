@@ -94,8 +94,21 @@ if [ ${#ARGS[@]} -eq 0 ]; then
 fi
 
 log "INFO: ingesting new exports (${ARGS[*]})"
-if ! uv run cartography ingest "${ARGS[@]}" >>"$LOG_FILE" 2>&1; then
-    log "ERROR: ingest failed — leaving inbox files in place for retry, not clustering"
+# ChromaDB's local persistent store has hit internal compaction errors
+# ("Error in compaction: ...") under sustained write load a few times in
+# practice — intermittent, not tied to any one input. --resume skips
+# already-embedded items, so retrying picks up where it left off instead of
+# redoing work.
+ingest_ok=0
+for attempt in 1 2 3; do
+    if uv run cartography ingest "${ARGS[@]}" --resume >>"$LOG_FILE" 2>&1; then
+        ingest_ok=1
+        break
+    fi
+    log "WARN: ingest attempt $attempt failed, retrying"
+done
+if [ "$ingest_ok" -ne 1 ]; then
+    log "ERROR: ingest failed after 3 attempts — leaving inbox files in place for retry, not clustering"
     exit 1
 fi
 
@@ -105,14 +118,17 @@ if ! uv run cartography cluster >>"$LOG_FILE" 2>&1; then
     exit 1
 fi
 
-# Mirror the map to local disk for serving. LaunchAgents can't reliably read
-# the NAS SMB mount (works fine in an interactive shell, 404s under launchd —
-# a macOS sandboxing quirk), so com.gustave.knowledge-cartography-webserver
-# serves this local copy instead of the NAS path directly.
-LOCAL_SERVE_DIR="${CARTOGRAPHY_LOCAL_SERVE_DIR:-$HOME/.cartography/serve}"
-mkdir -p "$LOCAL_SERVE_DIR"
-rsync -a --delete "$CARTOGRAPHY_OUTPUT_DIR/" "$LOCAL_SERVE_DIR/"
-log "INFO: mirrored map to $LOCAL_SERVE_DIR for local serving"
+# No mirroring step here: CARTOGRAPHY_CHROMA_DIR and CARTOGRAPHY_OUTPUT_DIR
+# point at local disk (~/.cartography/{chroma,serve}), not the NAS mount —
+# com.gustave.knowledge-cartography-webserver already serves OUTPUT_DIR
+# directly. Two reasons chroma moved off the NAS: LaunchAgents can't
+# reliably read the SMB mount (works in an interactive shell, 404s under
+# launchd — a macOS sandboxing quirk), and more fundamentally, ChromaDB's
+# internal compaction errors under sustained write load on SMB (and,
+# it turns out, intermittently even on local disk — see the retry-on-failure
+# note in docs/ARCHITECTURE.md). The NAS is still where raw exports land
+# (inbox/) and chroma/output could still be periodically backed up there,
+# just not written to live.
 
 TS="$(date '+%Y%m%d-%H%M%S')"
 for f in "${MOVED[@]}"; do

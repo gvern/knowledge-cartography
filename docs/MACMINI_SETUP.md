@@ -36,9 +36,11 @@ uv sync --extra local --group dev
 
 ## 3. Monter le NAS de façon persistante
 
-Il faut que le point de montage survive aux redémarrages/reconnexions, sans
-intervention manuelle, puisque le job launchd tourne sans session utilisateur
-active en avant-plan.
+Le NAS sert uniquement de dépôt pour les exports bruts (`inbox/`) — **pas**
+pour la base vectorielle ni pour la carte générée, voir §4. Il faut que le
+point de montage survive aux redémarrages/reconnexions, sans intervention
+manuelle, puisque le job launchd tourne sans session utilisateur active en
+avant-plan.
 
 Le plus simple sur macOS : Finder → Cmd+K → `smb://<nom-ou-ip-nas>/<partage>`,
 cocher "Se souvenir de ce mot de passe" (stocké dans le Keychain), puis
@@ -57,7 +59,6 @@ Créer la structure attendue sur le NAS :
 ```bash
 NAS=/Volumes/<partage>/knowledge-cartography   # adapter le chemin
 mkdir -p "$NAS"/inbox/{instagram,facebook,google,bookmarks,processed}
-mkdir -p "$NAS"/chroma "$NAS"/output
 ```
 
 ## 4. Configurer `.env`
@@ -65,11 +66,27 @@ mkdir -p "$NAS"/chroma "$NAS"/output
 Créer `~/code/knowledge-cartography/.env` (gitignored) sur le Mac Mini :
 
 ```bash
-CARTOGRAPHY_CHROMA_DIR=/Volumes/<partage>/knowledge-cartography/chroma
-CARTOGRAPHY_OUTPUT_DIR=/Volumes/<partage>/knowledge-cartography/output
+CARTOGRAPHY_CHROMA_DIR=/Users/<user>/.cartography/chroma
+CARTOGRAPHY_OUTPUT_DIR=/Users/<user>/.cartography/serve
 CARTOGRAPHY_INBOX_DIR=/Volumes/<partage>/knowledge-cartography/inbox
 CARTOGRAPHY_ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+**`CHROMA_DIR` et `OUTPUT_DIR` vivent sur le disque local, pas le NAS** —
+essayé d'abord sur le mount SMB, deux problèmes rencontrés en pratique :
+ChromaDB fait des écritures/verrous fréquents (WAL-style) que SMB gère mal
+et a fini par planter en pleine ingestion (`Error in compaction: Error
+purging logs`) ; et le mount lui-même s'est mis à bloquer au point de faire
+disparaître toute la machine du tailnet pendant plusieurs minutes. `OUTPUT_DIR`
+pointant directement vers `~/.cartography/serve/` a aussi l'avantage
+d'éliminer l'étape de mirroring séparée qu'il fallait sinon faire pour
+`com.gustave.knowledge-cartography-webserver` (voir §7).
+
+Même en local, ChromaDB a montré des erreurs de compaction intermittentes
+sous forte charge (ingestion de 245k+ items d'un coup) — pas la peine de
+chercher plus loin la cause exacte pour l'instant : `scripts/process_inbox.sh`
+retente automatiquement `cartography ingest --resume` (idempotent, saute les
+items déjà embeddés) jusqu'à 3 fois en cas d'échec.
 
 `CARTOGRAPHY_INBOX_DIR` n'est pas lu par `config.py` (settings de l'app) —
 c'est `scripts/process_inbox.sh` qui le lit directement dans ce même fichier,
@@ -117,15 +134,12 @@ tail -f ~/Library/Logs/cartography/inbox.log
 
 Le variant macOS de Tailscale (App Store, sandboxé) ne peut pas servir un
 dossier directement — `tailscale serve <dossier>` échoue avec "Path serving
-is not supported on macOS due to sandbox restrictions". Et les LaunchAgents
-n'arrivent pas à lire le mount SMB du NAS (404, alors que la même commande
-marche en shell interactif — restriction sandbox propre aux agents en
-arrière-plan sur volumes réseau). Solution : un petit serveur HTTP local qui
-sert un miroir local de la carte, que Tailscale proxifie.
+is not supported on macOS due to sandbox restrictions". Solution : un petit
+serveur HTTP local, que Tailscale proxifie.
 
-`scripts/process_inbox.sh` resynchronise déjà `CARTOGRAPHY_OUTPUT_DIR` (NAS)
-vers `~/.cartography/serve/` (disque local) après chaque `cartography
-cluster`. Il reste à installer le serveur et le proxy :
+`CARTOGRAPHY_OUTPUT_DIR` pointant déjà vers `~/.cartography/serve/` (§4),
+`cartography cluster` y écrit la carte directement — pas d'étape de
+mirroring séparée à faire. Il reste à installer le serveur et le proxy :
 
 ```bash
 mkdir -p ~/.cartography/serve

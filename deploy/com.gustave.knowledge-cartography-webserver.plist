@@ -6,11 +6,14 @@
   this port to the tailnet — Tailscale's sandboxed macOS app can't serve a
   directory directly, only proxy a port, hence this extra hop.
 
-  Serves ~/.cartography/serve, a local mirror of CARTOGRAPHY_OUTPUT_DIR
-  (kept in sync by scripts/process_inbox.sh after each cluster run) rather
-  than the NAS mount directly: LaunchAgents 404 reading the SMB mount even
-  though the same command works fine in an interactive shell (macOS
-  sandboxing quirk for background agents on network volumes).
+  Serves ~/.cartography/serve, which CARTOGRAPHY_OUTPUT_DIR points at
+  directly — cartography cluster writes the map straight here, no separate
+  mirroring step. Local disk, not the NAS mount: LaunchAgents 404 reading
+  the SMB mount even though the same command works fine in an interactive
+  shell (macOS sandboxing quirk for background agents on network volumes),
+  and ChromaDB (which shares this reasoning for CARTOGRAPHY_CHROMA_DIR) hit
+  internal compaction errors under sustained writes over SMB. See
+  docs/MACMINI_SETUP.md §4.
 -->
 <plist version="1.0">
 <dict>

@@ -1,17 +1,42 @@
 # Architecture de déploiement
 
-Statut : proposition, rien n'est implémenté. Ce document capture la conception
-discutée pour faire tourner `cartography` en continu sur une infra perso
-(Mac Mini + NAS + Tailscale), avant de coder quoi que ce soit.
+Statut : implémenté et en usage. Ce document a démarré comme une proposition
+avant tout code ; il documente maintenant l'infra perso réellement en place
+(Mac Mini + NAS + Tailscale), y compris les écarts par rapport au plan
+initial découverts en pratique (voir "NAS vs disque local" ci-dessous).
 
 ## Rôles de chaque machine
 
 | Machine | Rôle |
 |---|---|
-| **NAS** | Stockage durable : exports bruts (`inbox/`), base vectorielle ChromaDB, cartes HTML générées. Source de vérité — rien d'important ne doit vivre uniquement sur le Mac Mini ou un poste de dev. |
-| **Mac Mini** | Nœud de calcul always-on : héberge Ollama (embeddings locaux), exécute le pipeline `cartography` sur un planning (launchd), monte le NAS en lecture/écriture. |
+| **NAS** | Stockage des exports bruts (`inbox/`) uniquement — pas la base vectorielle ni les cartes générées, voir ci-dessous. |
+| **Mac Mini** | Nœud de calcul always-on : héberge Ollama (embeddings locaux), exécute le pipeline `cartography` sur un planning (launchd), stocke la base vectorielle et les cartes sur son propre disque. |
 | **Tailscale** | Réseau privé qui relie NAS, Mac Mini, postes et téléphone sans exposer de port public. Utile surtout hors du LAN domestique (consulter la carte depuis l'extérieur, déclencher un run à distance). |
 | **Poste de dev** | Pilotage / itération sur le code — pas dans la boucle d'exécution continue. |
+
+## NAS vs disque local : ce qui a changé par rapport au plan initial
+
+Le plan de départ mettait tout sur le NAS (`CARTOGRAPHY_CHROMA_DIR` /
+`CARTOGRAPHY_OUTPUT_DIR` pointés dessus), le NAS étant la "source de vérité".
+En pratique, sur un ingest Messenger de 245k+ items :
+
+- ChromaDB fait des écritures/verrous internes fréquents (mécanisme proche
+  d'un WAL) que le mount SMB gère mal — a fini par planter en pleine
+  ingestion (`chromadb.errors.InternalError: Error in compaction: Error
+  purging logs`).
+- Le mount SMB lui-même s'est mis à bloquer au point de faire disparaître
+  toute la machine du tailnet pendant plusieurs minutes.
+- Même rapatrié sur disque local, ChromaDB a ensuite montré des erreurs de
+  compaction intermittentes sous forte charge soutenue (même cause probable,
+  pas encore isolée précisément) — `scripts/process_inbox.sh` et le run
+  manuel retentent automatiquement avec `--resume` (idempotent) en cas
+  d'échec plutôt que de tout perdre.
+
+Résultat : `CARTOGRAPHY_CHROMA_DIR` et `CARTOGRAPHY_OUTPUT_DIR` pointent sur
+le disque local du Mac Mini (`~/.cartography/{chroma,serve}`), pas le NAS.
+Le NAS garde son rôle pour `inbox/` (exports bruts, écriture ponctuelle peu
+fréquente — pas le même profil de charge). Voir
+[docs/MACMINI_SETUP.md](MACMINI_SETUP.md) §4 pour le détail.
 
 ## Flux de données
 
@@ -26,18 +51,15 @@ exports bruts → NAS:/inbox/<source>/
                      │
         ┌────────────┴────────────┐
         ▼                         ▼
-NAS:/chroma (vecteurs)   NAS:/output (carte HTML)
+ ~/.cartography/chroma    ~/.cartography/serve
+ (vecteurs, local)        (carte HTML, local — servie directement,
+                            voir "Consultation de la carte" ci-dessous)
 ```
 
-Correspond à ce que `config.py` anticipe déjà (`CARTOGRAPHY_CHROMA_DIR` /
-`CARTOGRAPHY_OUTPUT_DIR` pointables vers un mount NAS) — pas de changement de
-code nécessaire pour ça, juste de la config d'environnement sur le Mac Mini.
-
-**Consultation de la carte** : soit monter le NAS en SMB sur les autres
-devices et ouvrir le HTML localement, soit (préférable) servir `output/` via
-un petit serveur web sur le NAS et y accéder par le nom Tailscale
-(MagicDNS) — évite de dépendre du montage réseau juste pour regarder la carte
-depuis le téléphone.
+**Consultation de la carte** : servie directement depuis le Mac Mini via
+Tailscale Serve (`https://gustaves-mac-mini.tail877df4.ts.net/`) — voir la
+case correspondante dans "Prochaines étapes" plus bas pour le détail
+d'implémentation.
 
 **Détection des nouveaux exports** : un dossier `NAS:/inbox/<source>/` où on
 dépose les nouveaux exports zippés. Un job launchd sur le Mac Mini tourne par
@@ -103,9 +125,10 @@ ne doit pas changer implicitement.
 - [x] Tailscale connecte le Mac Mini et le poste de dev (`gustaves-mac-mini` visible sur le tailnet)
 - [x] Job launchd sur le Mac Mini (détection `inbox/` + ingest planifié) —
       installé et testé (`launchctl kickstart` → run OK), tourne nightly à
-      3h. NAS monté sur `/Volumes/NAS-UGREEN`, données sous
-      `Projets/knowledge-cartography/{inbox,chroma,output}`. Voir
-      [docs/MACMINI_SETUP.md](MACMINI_SETUP.md)
+      3h. NAS monté sur `/Volumes/NAS-UGREEN`
+      (`Projets/knowledge-cartography/inbox/`) pour les exports bruts ;
+      base vectorielle et carte sur disque local, voir "NAS vs disque
+      local" plus haut. Voir [docs/MACMINI_SETUP.md](MACMINI_SETUP.md)
 - [x] Config Tailscale Serve/MagicDNS pour consulter la carte depuis le
       tailnet — la carte est servie sur
       `https://gustaves-mac-mini.tail877df4.ts.net/`. Le variant macOS de
@@ -113,13 +136,11 @@ ne doit pas changer implicitement.
       directement (`tailscale serve <dossier>` échoue avec "Path serving is
       not supported on macOS due to sandbox restrictions") ; on proxy donc
       vers un `python3 -m http.server` local (`com.gustave.knowledge-cartography-webserver`,
-      port 8642, bind 127.0.0.1) qui sert un miroir local
-      (`~/.cartography/serve/`) plutôt que le mount NAS directement — les
-      LaunchAgents obtiennent un 404 en lisant le mount SMB (alors que la
-      même commande marche en shell interactif, restriction sandbox macOS
-      propre aux agents en arrière-plan sur volumes réseau).
-      `scripts/process_inbox.sh` resynchronise ce miroir après chaque
-      `cartography cluster`. Voir [docs/MACMINI_SETUP.md](MACMINI_SETUP.md).
+      port 8642, bind 127.0.0.1) qui sert `~/.cartography/serve/` —
+      `CARTOGRAPHY_OUTPUT_DIR` pointe directement dessus (voir "NAS vs
+      disque local" plus haut), donc `cartography cluster` y écrit la carte
+      sans étape de mirroring séparée. Voir
+      [docs/MACMINI_SETUP.md](MACMINI_SETUP.md).
 - [x] Module `ingest/messenger.py` pour parser `your_facebook_activity/messages/`
       — un item par message texte (skip pièces jointes seules et messages
       supprimés), correctif du bug d'encodage mojibake de l'export Facebook.
