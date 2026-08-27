@@ -84,6 +84,7 @@ def cluster_items(settings: Settings) -> list[ClusteredItem]:
                 cluster_id=int(label),
                 x=float(coord[0]),
                 y=float(coord[1]),
+                z=float(coord[2]) if len(coord) > 2 else 0.0,
             )
         )
 
