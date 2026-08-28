@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import unicodedata
 from collections import Counter, defaultdict
 
 import anthropic
@@ -113,7 +114,7 @@ _STOPWORDS = frozenset(
     tout tous toute toutes rien aucun aucune chaque autre autres
     alors donc puis ensuite enfin voila voilà quand comment pourquoi
     ça cela ceci ici là bas haut
-    salut coucou bonjour bonsoir merci svp stp ok okay lol mdr ptdr haha hihi
+    salut coucou bonjour bonsoir merci svp stp ok okay lol mdr ptdr haha hihi ahah ah
     encore toujours jamais déjà aussi peu beaucoup quelque quelques certain certains
     chose truc fois dire dit sais sait veux veut peux peut vais vas faut falloir
     the a an and or but if of to in on for with at by from as is are was were be
@@ -125,6 +126,20 @@ _STOPWORDS = frozenset(
     """.split()
 )
 _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+_REPEAT_RE = re.compile(r"(.)\1+")
+
+
+def _is_stopword(token: str) -> bool:
+    # Catches chat elongation ("mdrrrr", "ouiiii") by collapsing repeated
+    # letters down to one before checking — cheaper than listing every variant.
+    return token in _STOPWORDS or _REPEAT_RE.sub(r"\1", token) in _STOPWORDS
+
+
+def _fold(term: str) -> str:
+    """Accent- and crude-plural-insensitive key, used only to dedupe near-identical
+    terms within one label ("même"/"meme"/"mêmes" shouldn't fill all 3 slots)."""
+    folded = "".join(c for c in unicodedata.normalize("NFKD", term) if not unicodedata.combining(c))
+    return folded[:-1] if len(folded) > 4 and folded.endswith("s") else folded
 
 
 def _local_keyword_labels(by_cluster: dict[int, list[ClusteredItem]], top_n: int = 3) -> dict[int, str]:
@@ -141,7 +156,7 @@ def _local_keyword_labels(by_cluster: dict[int, list[ClusteredItem]], top_n: int
         counts: Counter[str] = Counter()
         for item in cluster_items:
             for token in _TOKEN_RE.findall(item.text.lower()):
-                if len(token) < 3 or token in _STOPWORDS:
+                if len(token) < 3 or _is_stopword(token):
                     continue
                 counts[token] += 1
         cluster_terms[cluster_id] = counts
@@ -158,7 +173,17 @@ def _local_keyword_labels(by_cluster: dict[int, list[ClusteredItem]], top_n: int
             idf = math.log((n_clusters + 1) / (doc_freq[term] + 1)) + 1
             return count * idf
 
-        top_terms = sorted(counts, key=lambda t: score(t, counts[t]), reverse=True)[:top_n]
+        ranked = sorted(counts, key=lambda t: score(t, counts[t]), reverse=True)
+        top_terms: list[str] = []
+        seen_folded: set[str] = set()
+        for term in ranked:
+            key = _fold(term)
+            if key in seen_folded:
+                continue
+            seen_folded.add(key)
+            top_terms.append(term)
+            if len(top_terms) == top_n:
+                break
         labels[cluster_id] = " / ".join(t.capitalize() for t in top_terms)
 
     return labels

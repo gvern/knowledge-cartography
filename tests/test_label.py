@@ -130,6 +130,31 @@ def test_local_keyword_labels_downweight_terms_common_to_every_cluster():
     assert "cats" in labels[1].lower()
 
 
+def test_local_keyword_labels_dedupe_accent_and_plural_variants():
+    by_cluster = {
+        0: [_item(0, "même meme mêmes histoire vraiment vraiment vraiment")],
+    }
+
+    labels = _local_keyword_labels(by_cluster)
+
+    # "même"/"meme"/"mêmes" fold to the same key — only one slot spent on it,
+    # leaving room for "histoire" too instead of 3 near-duplicate spellings.
+    variants_present = sum(1 for w in ("même", "meme", "mêmes") if w in labels[0].lower())
+    assert variants_present == 1
+    assert "histoire" in labels[0].lower()
+
+
+def test_local_keyword_labels_filter_elongated_chat_slang():
+    by_cluster = {
+        0: [_item(0, "mdrrrr ouiiii une vraie discussion sur les vacances")],
+    }
+
+    labels = _local_keyword_labels(by_cluster)
+
+    assert "mdr" not in labels[0].lower()
+    assert "ouii" not in labels[0].lower()
+
+
 def test_local_keyword_labels_skip_unclustered_and_empty_text():
     by_cluster = {
         -1: [_item(-1, "noise item")],
