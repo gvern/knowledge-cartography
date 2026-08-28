@@ -93,7 +93,20 @@ def build_map(
         div_id="cg-plot",
     )
 
-    page = _render_page(plot_html, summaries, collections, total_items=len(items))
+    conversations = _conversation_summaries(items)
+    timeline_fig = _build_timeline_figure(items, conversations)
+    timeline_html = timeline_fig.to_html(
+        include_plotlyjs=False,
+        config=config,
+        full_html=False,
+        default_width="100%",
+        default_height="100%",
+        div_id="cg-timeline-plot",
+    )
+
+    page = _render_page(
+        plot_html, timeline_html, summaries, collections, conversations, total_items=len(items)
+    )
     output_path = settings.output_dir / output_name
     output_path.write_text(page, encoding="utf-8")
     logger.info("Wrote knowledge map to %s", output_path)
@@ -216,6 +229,91 @@ def _cluster_summaries(items: list[ClusteredItem]) -> dict[int, dict]:
     return summaries
 
 
+def _conversation_summaries(items: list[ClusteredItem]) -> dict[str, dict]:
+    """One entry per thread_id, ordered by nothing yet (caller sorts) — items
+    with no thread (not a conversation-shaped source) or no timestamp (can't
+    place on a time axis) are excluded."""
+    summaries: dict[str, dict] = {}
+    for item in items:
+        if not item.thread_id or item.timestamp is None:
+            continue
+        summary = summaries.setdefault(
+            item.thread_id,
+            {
+                "thread_id": item.thread_id,
+                "label": item.thread or item.thread_id,
+                "count": 0,
+                "first": item.timestamp,
+                "last": item.timestamp,
+            },
+        )
+        summary["count"] += 1
+        summary["first"] = min(summary["first"], item.timestamp)
+        summary["last"] = max(summary["last"], item.timestamp)
+    return summaries
+
+
+def _self_sender(items: list[ClusteredItem]) -> str:
+    """Heuristic: whoever sent the most messages overall is very likely the
+    export's owner, since they appear in every one of their own threads.
+    Nothing in the export says so explicitly."""
+    counts: dict[str, int] = {}
+    for item in items:
+        if item.sender:
+            counts[item.sender] = counts.get(item.sender, 0) + 1
+    return max(counts, key=lambda s: counts[s]) if counts else ""
+
+
+def _build_timeline_figure(items: list[ClusteredItem], conversations: dict[str, dict]) -> go.Figure:
+    conv_items = [item for item in items if item.thread_id and item.timestamp is not None]
+    self_sender = _self_sender(conv_items)
+    other_items = [item for item in conv_items if item.sender != self_sender]
+    self_items = [item for item in conv_items if item.sender == self_sender]
+
+    fig = go.Figure()
+    if other_items:
+        fig.add_trace(_timeline_trace(other_items, "Them", _TEXT_MUTED))
+    if self_items:
+        fig.add_trace(_timeline_trace(self_items, "Me", _ACCENT))
+
+    ordered = sorted(conversations.values(), key=lambda c: c["last"], reverse=True)
+    ordered_ids = [c["thread_id"] for c in ordered]
+    fig.update_layout(
+        xaxis=dict(color=_TEXT_SECONDARY, gridcolor=_HAIRLINE, zeroline=False),
+        yaxis=dict(visible=False, categoryorder="array", categoryarray=ordered_ids),
+        showlegend=True,
+        legend=dict(itemsizing="constant", bgcolor="rgba(0,0,0,0)", font=dict(color=_TEXT_SECONDARY)),
+        paper_bgcolor=_PAGE,
+        plot_bgcolor=_SURFACE,
+        autosize=True,
+        margin=dict(l=0, r=0, t=10, b=30),
+        hoverlabel=dict(bgcolor=_SURFACE, font=dict(color=_TEXT_PRIMARY)),
+    )
+    return fig
+
+
+def _timeline_trace(items: list[ClusteredItem], name: str, color: str) -> go.Scattergl:
+    return go.Scattergl(
+        x=[item.timestamp for item in items],
+        y=[item.thread_id for item in items],
+        mode="markers",
+        name=name,
+        marker=dict(size=6, opacity=0.7, color=color, line=dict(width=0.3, color=_SURFACE)),
+        text=[_timeline_hover(item) for item in items],
+        hoverinfo="text",
+        customdata=[_item_detail(item) for item in items],
+    )
+
+
+def _timeline_hover(item: ClusteredItem) -> str:
+    summary = " ".join(item.text.split()) if item.text else "(no text)"
+    if len(summary) > _HOVER_SUMMARY_MAX_CHARS:
+        summary = summary[: _HOVER_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+    when = item.timestamp.strftime("%d %b %Y %H:%M") if item.timestamp else ""
+    sender = html.escape(item.sender) if item.sender else "Unknown"
+    return f"<b>{sender}</b> · {when}<br>{html.escape(summary)}"
+
+
 def _cluster_annotation(cluster: dict) -> dict:
     return dict(
         x=cluster["cx"],
@@ -264,11 +362,18 @@ def _item_detail(item: ClusteredItem) -> dict:
         "type": _humanize(item.item_type.value),
         "cluster": item.cluster_label or f"Cluster {item.cluster_id}",
         "collections": item.collections,
+        "sender": item.sender,
+        "when": item.timestamp.strftime("%d %b %Y %H:%M") if item.timestamp else "",
     }
 
 
 def _render_page(
-    plot_html: str, summaries: dict[int, dict], collections: dict[str, dict], total_items: int
+    plot_html: str,
+    timeline_html: str,
+    summaries: dict[int, dict],
+    collections: dict[str, dict],
+    conversations: dict[str, dict],
+    total_items: int,
 ) -> str:
     rows = sorted(summaries.values(), key=lambda c: -c["count"])
     sidebar_data = [
@@ -300,6 +405,37 @@ def _render_page(
         f'<span class="cg-row-count">{c["count"]}</span></li>'
         for i, c in enumerate(collection_rows_data)
     )
+
+    conversation_rows_data = sorted(conversations.values(), key=lambda c: c["last"], reverse=True)
+    conversation_data = [
+        {
+            "id": c["thread_id"],
+            "label": c["label"],
+            "count": c["count"],
+            "idx": i,
+            "first": c["first"].isoformat(),
+            "last": c["last"].isoformat(),
+        }
+        for i, c in enumerate(conversation_rows_data)
+    ]
+    conversation_rows = "\n".join(
+        f'<li class="cg-row" data-idx="{i}"><span class="cg-row-label">{html.escape(c["label"])}</span>'
+        f'<span class="cg-row-count">{c["count"]}</span></li>'
+        for i, c in enumerate(conversation_rows_data)
+    )
+
+    # No conversation data (no Messenger — or similar — items ingested): default
+    # to the clusters tab rather than an empty timeline.
+    default_tab = "conversations" if conversation_data else "clusters"
+
+    def tab_class(name: str) -> str:
+        return "cg-tab cg-tab-active" if name == default_tab else "cg-tab"
+
+    def list_class(name: str) -> str:
+        return "cg-list" if name == default_tab else "cg-list cg-tab-hidden"
+
+    map_hidden = "" if default_tab == "clusters" else " cg-tab-hidden"
+    timeline_hidden = "" if default_tab == "conversations" else " cg-tab-hidden"
 
     return f"""<!doctype html>
 <html>
@@ -577,38 +713,56 @@ def _render_page(
     text-decoration: none;
   }}
   .cg-inspector-link:hover {{ text-decoration: underline; }}
+  .cg-timeline-viewport {{
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }}
+  .cg-timeline-viewport.cg-tab-hidden, .cg-viewport.cg-tab-hidden {{ display: none; }}
+  #cg-timeline-plot {{
+    width: 100%;
+    height: 100%;
+  }}
 </style>
 </head>
 <body>
 <header>
   <h1>Knowledge Cartography</h1>
   <span class="cg-sub">
-    click a cluster (map or list) to focus it — click a linked point to open it
+    click a conversation (timeline or list) to focus it — click a point to open it
   </span>
   <span class="cg-stats">
     <span><b>{total_items:,}</b> items</span>
+    <span><b>{len(conversation_data)}</b> conversations</span>
     <span><b>{len(rows)}</b> clusters</span>
   </span>
 </header>
 <main>
-  <div class="cg-viewport">
+  <div class="cg-viewport{map_hidden}">
     {plot_html}
     <div class="cg-corner cg-corner-tl"></div>
     <div class="cg-corner cg-corner-tr"></div>
     <div class="cg-corner cg-corner-bl"></div>
     <div class="cg-corner cg-corner-br"></div>
   </div>
+  <div class="cg-timeline-viewport{timeline_hidden}">
+    {timeline_html}
+  </div>
   <aside>
     <div class="cg-tabs">
-      <div class="cg-tab cg-tab-active" data-tab="clusters">Clusters</div>
-      <div class="cg-tab" data-tab="collections">Collections</div>
+      <div class="{tab_class("conversations")}" data-tab="conversations">Conversations</div>
+      <div class="{tab_class("clusters")}" data-tab="clusters">Clusters</div>
+      <div class="{tab_class("collections")}" data-tab="collections">Collections</div>
     </div>
     <input id="cg-search" type="text" placeholder="Search everything..." autocomplete="off" />
     <span id="cg-search-count"></span>
-    <ul id="cg-list-clusters" class="cg-list">
+    <ul id="cg-list-conversations" class="{list_class("conversations")}">
+      {conversation_rows}
+    </ul>
+    <ul id="cg-list-clusters" class="{list_class("clusters")}">
       {sidebar_rows}
     </ul>
-    <ul id="cg-list-collections" class="cg-list cg-tab-hidden">
+    <ul id="cg-list-collections" class="{list_class("collections")}">
       {collection_rows}
     </ul>
   </aside>
@@ -625,13 +779,16 @@ def _render_page(
 <script>
   const CG_CLUSTERS = {json.dumps(sidebar_data)};
   const CG_COLLECTIONS = {json.dumps(collection_data)};
+  const CG_CONVERSATIONS = {json.dumps(conversation_data)};
   const CG_ACCENT = {json.dumps(_ACCENT)};
   const CG_MAX_LABELS = {_MAX_DIRECT_LABELS};
   const plotDiv = document.getElementById("cg-plot");
+  const timelineDiv = document.getElementById("cg-timeline-plot");
   const searchInput = document.getElementById("cg-search");
   const searchCount = document.getElementById("cg-search-count");
   const clusterRows = document.querySelectorAll("#cg-list-clusters .cg-row");
   const collectionRows = document.querySelectorAll("#cg-list-collections .cg-row");
+  const conversationRows = document.querySelectorAll("#cg-list-conversations .cg-row");
   const clustersById = new Map(CG_CLUSTERS.map((c) => [c.id, c]));
   const collectionsByName = new Map(CG_COLLECTIONS.map((c, i) => [c.name, i]));
   const highlightTraceIndex = plotDiv.data.findIndex((t) => t.name === "collection-highlight");
@@ -648,6 +805,20 @@ def _render_page(
     Plotly.relayout(plotDiv, {{
       "xaxis.range": [c.x0 - padX, c.x1 + padX],
       "yaxis.range": [c.y0 - padY, c.y1 + padY],
+    }});
+  }}
+
+  // Categorical y-axis: Plotly assigns integer positions 0,1,2... in the
+  // order given by categoryarray at layout time, matching CG_CONVERSATIONS'
+  // idx — isolate one row by range, and zoom x to that thread's own span
+  // (with a floor so a single-message thread still gets a visible window).
+  function zoomToConversation(c) {{
+    const first = new Date(c.first).getTime();
+    const last = new Date(c.last).getTime();
+    const padMs = Math.max((last - first) * 0.15, 1000 * 60 * 60 * 24);
+    Plotly.relayout(timelineDiv, {{
+      "yaxis.range": [c.idx - 0.6, c.idx + 0.6],
+      "xaxis.range": [new Date(first - padMs), new Date(last + padMs)],
     }});
   }}
 
@@ -682,17 +853,24 @@ def _render_page(
     setHighlight(c.x, c.y);
   }}
 
-  // --- tabs: switch between browsing clusters and collections ---
+  // --- tabs: switch between browsing conversations, clusters, and collections ---
   const tabs = document.querySelectorAll(".cg-tab");
   const lists = {{
+    conversations: document.getElementById("cg-list-conversations"),
     clusters: document.getElementById("cg-list-clusters"),
     collections: document.getElementById("cg-list-collections"),
   }};
+  const mapViewport = document.querySelector(".cg-viewport");
+  const timelineViewport = document.querySelector(".cg-timeline-viewport");
   function activateTab(tabName) {{
     tabs.forEach((t) => t.classList.toggle("cg-tab-active", t.dataset.tab === tabName));
     Object.entries(lists).forEach(([name, list]) => {{
       list.classList.toggle("cg-tab-hidden", name !== tabName);
     }});
+    const showTimeline = tabName === "conversations";
+    timelineViewport.classList.toggle("cg-tab-hidden", !showTimeline);
+    mapViewport.classList.toggle("cg-tab-hidden", showTimeline);
+    Plotly.Plots.resize(showTimeline ? timelineDiv : plotDiv);
   }}
   tabs.forEach((tab) => {{
     tab.addEventListener("click", () => {{
@@ -740,6 +918,10 @@ def _render_page(
       const name = CG_COLLECTIONS[Number(row.dataset.idx)].name.toLowerCase();
       row.classList.toggle("cg-hidden", q.length > 0 && !name.includes(q));
     }});
+    conversationRows.forEach((row) => {{
+      const label = CG_CONVERSATIONS[Number(row.dataset.idx)].label.toLowerCase();
+      row.classList.toggle("cg-hidden", q.length > 0 && !label.includes(q));
+    }});
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => runSearch(searchInput.value), 200);
   }});
@@ -756,6 +938,14 @@ def _render_page(
     row.addEventListener("click", () => selectCollection(Number(row.dataset.idx), row));
   }});
 
+  conversationRows.forEach((row) => {{
+    row.addEventListener("click", () => {{
+      conversationRows.forEach((r) => r.classList.remove("cg-active"));
+      row.classList.add("cg-active");
+      zoomToConversation(CG_CONVERSATIONS[Number(row.dataset.idx)]);
+    }});
+  }});
+
   // --- inspector: persistent panel on point click (replaces the old auto-hiding toast —
   // the point is to actually read a recipe, not glimpse it for 5 seconds) ---
   const inspector = document.getElementById("cg-inspector");
@@ -765,7 +955,9 @@ def _render_page(
   const inspectorFooter = document.getElementById("cg-inspector-footer");
 
   function openInspector(detail) {{
-    inspectorMeta.textContent = `${{detail.cluster}} · ${{detail.source}} (${{detail.type}})`;
+    inspectorMeta.textContent = detail.sender
+      ? `${{detail.sender}} · ${{detail.when}}`
+      : `${{detail.cluster}} · ${{detail.source}} (${{detail.type}})`;
     inspectorBody.textContent = detail.text || "(no text)";
     inspectorCollections.innerHTML = "";
     (detail.collections || []).forEach((name) => {{
@@ -808,6 +1000,13 @@ def _render_page(
     // The highlight ring can sit on top of the real point at the same coordinates —
     // scan all overlapping points for one with real detail rather than trusting points[0].
     const detailPoint = points.find(
+      (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
+    );
+    if (detailPoint) openInspector(detailPoint.customdata);
+  }});
+
+  timelineDiv.on("plotly_click", (eventdata) => {{
+    const detailPoint = (eventdata.points || []).find(
       (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
     );
     if (detailPoint) openInspector(detailPoint.customdata);

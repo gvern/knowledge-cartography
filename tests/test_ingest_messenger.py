@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from cartography.ingest import messenger
 from cartography.schema import ItemType, SourcePlatform
@@ -28,8 +29,8 @@ def test_parse_text_message(tmp_path):
     assert items[0].source == SourcePlatform.MESSENGER
     assert items[0].item_type == ItemType.MESSAGE
     assert items[0].content == "Hey, check this out"
-    assert items[0].metadata["sender"] == "A Friend"
-    assert items[0].metadata["thread"] == "Some Thread"
+    assert items[0].sender == "A Friend"
+    assert items[0].thread == "Some Thread"
 
 
 def test_parse_skips_attachment_only_messages(tmp_path):
@@ -106,9 +107,26 @@ def test_parse_html_text_message(tmp_path):
 
     assert len(items) == 1
     assert items[0].content == "Merci beaucoup !"
-    assert items[0].metadata["sender"] == "Gustave Vernay"
-    assert items[0].metadata["thread"] == "Aliénor Ddr"
-    assert items[0].timestamp is None
+    assert items[0].sender == "Gustave Vernay"
+    assert items[0].thread == "Aliénor Ddr"
+    assert items[0].timestamp == datetime(2021, 7, 13, 10, 58, 25)
+
+
+def test_parse_html_timestamp_handles_pm_and_unrecognized_month(tmp_path):
+    _html_thread(
+        tmp_path,
+        '<section class="_a6-g"><h2 class="_a6-h">Gustave Vernay</h2>'
+        '<div class="_2ph_ _a6-p"><div>soir</div></div>'
+        '<footer><div class="_a72d">août 29, 2019 9:28:24 pm</div></footer></section>'
+        '<section class="_a6-g"><h2 class="_a6-h">Gustave Vernay</h2>'
+        '<div class="_2ph_ _a6-p"><div>inconnu</div></div>'
+        '<footer><div class="_a72d">wat 1, 2019 1:00:00 am</div></footer></section>',
+    )
+
+    items = messenger.parse(tmp_path)
+
+    assert items[0].timestamp == datetime(2019, 8, 29, 21, 28, 24)
+    assert items[1].timestamp is None
 
 
 def test_parse_html_carries_sender_forward_when_heading_omitted(tmp_path):
@@ -124,7 +142,7 @@ def test_parse_html_carries_sender_forward_when_heading_omitted(tmp_path):
 
     items = messenger.parse(tmp_path)
 
-    assert [item.metadata["sender"] for item in items] == ["Aliénor Ddr", "Aliénor Ddr"]
+    assert [item.sender for item in items] == ["Aliénor Ddr", "Aliénor Ddr"]
 
 
 def test_parse_html_skips_attachment_only_messages(tmp_path):

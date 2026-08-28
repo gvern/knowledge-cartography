@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,7 +67,9 @@ def _parse_thread_json(path: Path) -> list[KnowledgeItem]:
                 item_type=ItemType.MESSAGE,
                 content=content,
                 timestamp=_to_datetime(timestamp_ms),
-                metadata={"thread": thread_title, "thread_path": thread_path, "sender": sender},
+                thread_id=thread_path,
+                thread=thread_title,
+                sender=sender,
             )
         )
     return items
@@ -123,18 +126,73 @@ def _parse_thread_html(path: Path) -> list[KnowledgeItem]:
         if not content:
             continue
 
+        footer = section.find("div", class_="_a72d")
+        timestamp = _parse_html_timestamp(footer.get_text(strip=True)) if footer else None
+
         items.append(
             KnowledgeItem(
                 id=make_id("messenger", thread_path, str(index), sender, content),
                 source=SourcePlatform.MESSENGER,
                 item_type=ItemType.MESSAGE,
                 content=content,
-                # Facebook's HTML export renders timestamps as
-                # locale-hybrid strings (French month names, English am/pm,
-                # e.g. "juil 13, 2021 10:58:25 am") with no machine-readable
-                # equivalent — left unset here, same as the other HTML-format
-                # parsers in facebook.py.
-                metadata={"thread": thread_title, "thread_path": thread_path, "sender": sender},
+                timestamp=timestamp,
+                thread_id=thread_path,
+                thread=thread_title,
+                sender=sender,
             )
         )
     return items
+
+
+# Facebook's HTML export renders timestamps as a locale-hybrid string, e.g.
+# "juil 13, 2021 10:58:25 am" — French month abbreviations (its own table,
+# not a standard locale's — "mar" for mars/March rather than "mars", etc.)
+# with an English 12-hour clock and am/pm. No timezone is given; treated as
+# naive (the export is for one person, one timezone, and the timeline only
+# needs correct relative ordering, not absolute UTC).
+_MONTHS_FR = {
+    "janv": 1,
+    "jan": 1,
+    "févr": 2,
+    "fév": 2,
+    "fev": 2,
+    "mars": 3,
+    "mar": 3,
+    "avr": 4,
+    "mai": 5,
+    "juin": 6,
+    "juil": 7,
+    "août": 8,
+    "aout": 8,
+    "sept": 9,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "déc": 12,
+    "dec": 12,
+}
+_TIMESTAMP_RE = re.compile(
+    r"^(?P<month>\w+)\s+(?P<day>\d{1,2}),\s+(?P<year>\d{4})\s+"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})\s*(?P<ampm>am|pm)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_html_timestamp(text: str) -> datetime | None:
+    match = _TIMESTAMP_RE.match(text.strip())
+    if not match:
+        return None
+    month = _MONTHS_FR.get(match["month"].lower())
+    if month is None:
+        return None
+
+    hour = int(match["hour"]) % 12
+    if match["ampm"].lower() == "pm":
+        hour += 12
+
+    try:
+        return datetime(
+            int(match["year"]), month, int(match["day"]), hour, int(match["minute"]), int(match["second"])
+        )
+    except ValueError:
+        return None

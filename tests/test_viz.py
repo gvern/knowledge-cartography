@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from cartography.config import Settings
 from cartography.schema import ClusteredItem, ItemType, SourcePlatform
 from cartography.viz import _hover_text, _item_detail, build_map
@@ -133,6 +135,73 @@ def test_item_detail_carries_untruncated_text_and_collections():
     assert detail["source"] == "Instagram"
     assert detail["type"] == "Saved post"
     assert detail["collections"] == ["Recipes", "Favorites"]
+
+
+def _message(id_, thread_id, thread, sender, content, when, cluster_id=0):
+    return ClusteredItem(
+        id=id_,
+        source=SourcePlatform.MESSENGER,
+        item_type=ItemType.MESSAGE,
+        content=content,
+        timestamp=when,
+        thread_id=thread_id,
+        thread=thread,
+        sender=sender,
+        cluster_id=cluster_id,
+        x=0.0,
+        y=0.0,
+    )
+
+
+def test_build_map_defaults_to_conversations_tab_when_messages_present(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        _message("a", "t1", "Aliénor Ddr", "Aliénor Ddr", "Salut !", datetime(2021, 7, 13, 10, 0)),
+        _message("b", "t1", "Aliénor Ddr", "Gustave Vernay", "Yo", datetime(2021, 7, 13, 10, 5)),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert 'data-tab="conversations"' in rendered
+    assert '<div class="cg-tab cg-tab-active" data-tab="conversations">' in rendered
+    assert 'id="cg-timeline-plot"' in rendered
+    assert '"label": "Ali\\u00e9nor Ddr"' in rendered  # sidebar conversation row data
+
+
+def test_build_map_defaults_to_clusters_tab_when_no_conversations(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        ClusteredItem(
+            id="a",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            title="Example",
+            cluster_id=0,
+            cluster_label="Cooking",
+            x=0.1,
+            y=0.2,
+        ),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert '<div class="cg-tab cg-tab-active" data-tab="clusters">' in rendered
+
+
+def test_build_map_timeline_excludes_items_without_timestamp(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        _message("a", "t1", "Group", "Gustave Vernay", "has a time", datetime(2021, 7, 13, 10, 0)),
+        _message("b", "t2", "No Timestamp", "Someone", "no time", None),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert '"label": "Group"' in rendered
+    assert '"label": "No Timestamp"' not in rendered
 
 
 def test_build_map_writes_inspector_panel_markup(tmp_path):

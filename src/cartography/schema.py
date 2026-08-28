@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,8 +33,15 @@ class KnowledgeItem(BaseModel):
     content: str = ""
     url: str | None = None
     timestamp: datetime | None = None
+    # Conversation context (Messenger, and any future message-like source).
+    # thread_id is a stable grouping key (e.g. Messenger's thread_path);
+    # thread is the human-readable label (contact/group name), which can
+    # collide across distinct threads (renames, same-named group chats) —
+    # group by thread_id, display thread.
+    thread_id: str = ""
+    thread: str = ""
+    sender: str = ""
     collections: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def text(self) -> str:

@@ -140,6 +140,9 @@ def _item_metadata(item: KnowledgeItem) -> dict:
         "title": item.title,
         "url": item.url or "",
         "timestamp": item.timestamp.isoformat() if item.timestamp else "",
+        "thread_id": item.thread_id,
+        "thread": item.thread,
+        "sender": item.sender,
         # Chroma metadata values must be scalar — collections is a list, so join it.
         "collections": _COLLECTIONS_SEP.join(item.collections),
     }
