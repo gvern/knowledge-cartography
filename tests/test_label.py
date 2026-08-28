@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import anthropic
 
 from cartography.config import Settings
-from cartography.label import label_clusters
+from cartography.label import _local_keyword_labels, label_clusters
 from cartography.schema import ClusteredItem, ItemType, SourcePlatform
 
 
@@ -54,7 +54,8 @@ def test_label_one_falls_back_when_no_text_block(monkeypatch):
 
     result = label_clusters(items, settings)
 
-    assert result[0].cluster_label == "Cluster 3"
+    # Falls back to a local keyword label, not the bare "Cluster 3" placeholder.
+    assert result[0].cluster_label == "Some / Article"
 
 
 def test_label_one_disables_thinking(monkeypatch):
@@ -83,7 +84,9 @@ def test_label_one_never_sends_messenger_content_to_the_api(monkeypatch):
     result = label_clusters(items, settings)
 
     client.messages.create.assert_not_called()
-    assert result[0].cluster_label == "Cluster 0"
+    # Local keyword label, not the bare "Cluster 0" placeholder — computed from
+    # the Messenger text itself, which is fine: it never leaves the machine.
+    assert result[0].cluster_label == "Private / Message"
 
 
 def test_label_one_excludes_messenger_samples_from_a_mixed_cluster(monkeypatch):
@@ -102,3 +105,38 @@ def test_label_one_excludes_messenger_samples_from_a_mixed_cluster(monkeypatch):
     prompt = client.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "Private message" not in prompt
     assert "public article about hiking" in prompt
+
+
+def test_label_clusters_without_api_key_uses_local_labels_for_everything(monkeypatch):
+    settings = Settings(anthropic_api_key=None)
+    items = [_item(0, "A great hiking trail")]
+
+    result = label_clusters(items, settings)
+
+    assert result[0].cluster_label == "Great / Hiking / Trail"
+
+
+def test_local_keyword_labels_downweight_terms_common_to_every_cluster():
+    # "chat" appears in both clusters (uninformative); "python" and "cats" each
+    # appear in only one (the actual topic) — the informative term should win.
+    by_cluster = {
+        0: [_item(0, "let's chat about python today")],
+        1: [_item(1, "let's chat about cats today")],
+    }
+
+    labels = _local_keyword_labels(by_cluster)
+
+    assert "python" in labels[0].lower()
+    assert "cats" in labels[1].lower()
+
+
+def test_local_keyword_labels_skip_unclustered_and_empty_text():
+    by_cluster = {
+        -1: [_item(-1, "noise item")],
+        0: [_item(0, "")],
+    }
+
+    labels = _local_keyword_labels(by_cluster)
+
+    assert -1 not in labels
+    assert labels[0] == "Cluster 0"
