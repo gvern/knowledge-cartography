@@ -1647,6 +1647,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "requests" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "trafilatura" },
     { name = "umap-learn" },
 ]
@@ -1683,6 +1685,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pydantic-settings", specifier = ">=2.2" },
     { name = "requests", specifier = ">=2.31" },
+    { name = "scikit-learn", specifier = ">=1.6" },
     { name = "trafilatura", specifier = ">=1.8" },
     { name = "umap-learn", specifier = ">=0.5" },
 ]

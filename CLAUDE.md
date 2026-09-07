@@ -1,9 +1,12 @@
 # knowledge-cartography
 
-Builds an interactive 2D map of a personal knowledge graph from social media
-exports (Instagram, Facebook) and browsing history (Google Takeout, HTML
-bookmarks). Pipeline: ingest → embed (Ollama or Vertex AI) → UMAP → HDBSCAN →
-label clusters via the Anthropic API → render an HTML map (Plotly).
+Builds an interactive 3D map of a personal knowledge graph from social media
+exports (Instagram, Facebook, Messenger) and browsing history (Google
+Takeout, HTML bookmarks). Pipeline: ingest → embed (Ollama or Vertex AI) →
+UMAP → HDBSCAN → label clusters via the Anthropic API → render an HTML map
+(Plotly), and/or export the same clustered knowledge as a structured JSON
+graph and an Obsidian-style Markdown vault for a second brain / agent to
+consume directly.
 
 ## Commands
 
@@ -12,8 +15,10 @@ uv sync --extra local --group dev   # deps + ruff/pytest/mypy
 uv run pytest                        # tests
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src/cartography
-uv run cartography ingest --instagram <dir> --facebook <dir> --google <dir> --bookmarks <file>
+uv run cartography ingest --instagram <dir> --facebook <dir> --google <dir> --messenger <dir> --bookmarks <file>
 uv run cartography cluster
+uv run cartography export --format both   # knowledge_graph.json + notes/ Markdown vault
+uv run cartography search "<query>"       # semantic search over the vector store
 uv run cartography stats
 ```
 
@@ -40,6 +45,7 @@ src/cartography/
 ├── cluster.py             # UMAP + HDBSCAN
 ├── label.py                 # cluster naming via the Anthropic API
 ├── viz.py                    # Plotly HTML map
+├── export.py                  # JSON graph (nodes/edges/clusters) + Markdown vault
 └── ingest/
     ├── instagram.py           # saved/liked posts (GDPR JSON export)
     ├── facebook.py              # saved items + followed pages (GDPR JSON, format varies by version)
@@ -65,3 +71,8 @@ tests/                                # mirrors src/, one test module per ingest
   API call, even in a cluster mixed with non-Messenger items. If you add
   another sensitive source (e.g. iMessage/WhatsApp), give it the same
   treatment rather than a one-off — see docs/ARCHITECTURE.md.
+- `export.py`'s JSON graph and Markdown vault stay purely local file writes
+  (like the HTML map already is) — they carry the same per-item text that's
+  already embedded in the map's page data, just reshaped, so no additional
+  Messenger restriction applies there. If `export.py` ever grows a mode that
+  calls a network API, apply the same Messenger exclusion as `label.py`.

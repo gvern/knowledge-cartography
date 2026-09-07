@@ -5,7 +5,10 @@ partir de tes exports de réseaux sociaux (posts sauvegardés/likés, pages
 suivies) et de ton historique de navigation (Chrome, YouTube, recherches
 Google, favoris). Chaque élément est transformé en embedding, projeté en 3D
 (UMAP), regroupé par sujet (HDBSCAN), et étiqueté automatiquement via l'API
-Claude.
+Claude. En plus de la carte HTML pour l'œil humain, le même graphe de
+connaissances s'exporte en JSON structuré et en vault Markdown façon
+Obsidian — exploitable par un second cerveau (agent, RAG) sans passer par un
+navigateur.
 
 ## Structure
 
@@ -18,6 +21,7 @@ src/cartography/
 ├── cluster.py          # UMAP + HDBSCAN
 ├── label.py              # nommage automatique des clusters via l'API Claude
 ├── viz.py                 # carte HTML interactive (Plotly)
+├── export.py               # graphe JSON (nodes/edges/clusters) + vault Markdown
 └── ingest/
     ├── instagram.py        # posts sauvegardés/likés (export GDPR JSON)
     ├── facebook.py           # éléments sauvegardés + pages suivies
@@ -63,6 +67,14 @@ cartography ingest --messenger ~/data/facebook
 # Clustering + génération de la carte
 cartography cluster
 open ./output/knowledge_map.html
+
+# Export pour un second cerveau : graphe JSON (nodes/edges/clusters) +
+# vault Markdown façon Obsidian (notes/, avec wikilinks cluster <-> collection)
+cartography export --format both
+open ./output/notes/index.md
+
+# Recherche sémantique en ligne de commande sur la base vectorielle
+cartography search "recette de pâtes"
 
 # Statistiques sur la base vectorielle
 cartography stats

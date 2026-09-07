@@ -6,7 +6,8 @@ import click
 
 from .cluster import cluster_items, load_cluster_cache, save_cluster_cache
 from .config import settings
-from .embed import embed_items, get_collection
+from .embed import embed_items, get_collection, get_embedder
+from .export import write_graph_json, write_markdown_vault
 from .ingest import facebook, google, instagram, messenger
 from .ingest.enrich import enrich_items
 from .label import label_clusters
@@ -119,6 +120,73 @@ def stats() -> None:
     """Show basic stats about the current vector store."""
     collection = get_collection(settings)
     click.echo(f"{collection.count()} items in {settings.chroma_dir}")
+
+
+@cli.command(name="export")
+@click.option(
+    "--format",
+    "export_format",
+    type=click.Choice(["json", "markdown", "both"]),
+    default="both",
+    help="Structured JSON graph (json), an Obsidian-style Markdown vault (markdown), or both",
+)
+@click.option("--output", "json_output_name", default="knowledge_graph.json", help="JSON graph filename")
+@click.option(
+    "--notes-dir", default="notes", help="Markdown vault directory name (under CARTOGRAPHY_OUTPUT_DIR)"
+)
+@click.option(
+    "--neighbors", "k_neighbors", default=6, help="Semantic nearest-neighbor edges per node in the JSON graph"
+)
+@click.option(
+    "--from-cache/--recompute",
+    default=True,
+    help="Reuse the previous cluster/label run's cache instead of recomputing UMAP/HDBSCAN/labels",
+)
+def export_cmd(export_format, json_output_name, notes_dir, k_neighbors, from_cache) -> None:
+    """Export the clustered knowledge graph for other tools: a structured JSON graph
+    (nodes/edges/clusters) and/or an Obsidian-compatible Markdown vault — the same
+    knowledge the HTML map shows a human, reshaped for an agent or a RAG pipeline."""
+    items = load_cluster_cache(settings) if from_cache else None
+    if items is None:
+        if from_cache:
+            click.echo("No cache found, computing from scratch")
+        items = cluster_items(settings)
+        items = label_clusters(items, settings)
+        save_cluster_cache(items, settings)
+
+    if export_format in ("json", "both"):
+        path = write_graph_json(items, settings, json_output_name, k_neighbors=k_neighbors)
+        click.echo(f"Graph exported to {path}")
+    if export_format in ("markdown", "both"):
+        path = write_markdown_vault(items, settings, notes_dir)
+        click.echo(f"Markdown vault written to {path}")
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--limit", default=10, help="Number of results to return")
+def search(query, limit) -> None:
+    """Semantic search over the local vector store — a quick way for the user or
+    an agent to query the second brain without opening the map."""
+    vector = get_embedder(settings).embed([query])[0]
+    results = get_collection(settings).query(query_embeddings=[vector], n_results=limit)
+
+    ids = results["ids"][0]
+    if not ids:
+        click.echo("No results.")
+        return
+
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
+    for i, (document, metadata, distance) in enumerate(
+        zip(documents, metadatas, distances, strict=True), start=1
+    ):
+        title = metadata.get("title") or (document or "")[:80]
+        source = metadata.get("source", "")
+        click.echo(f"{i}. [{distance:.3f}] ({source}) {title}")
+        if metadata.get("url"):
+            click.echo(f"   {metadata['url']}")
 
 
 if __name__ == "__main__":
