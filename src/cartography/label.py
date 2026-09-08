@@ -158,7 +158,16 @@ class LocalLabeler:
             logger.exception("Local LLM labeling failed for cluster %d (model %s)", cluster_id, self.model)
             return fallback
 
-        if not label:
+        # An 8B local model doesn't follow "2-5 words, no explanation" nearly
+        # as reliably as Claude — a multi-line ramble or a content-policy
+        # refusal ("I cannot provide a label that describes...") is a real,
+        # observed failure mode, not hypothetical. A genuine short label is
+        # never multi-line and comfortably under this length; treat anything
+        # else as a failed attempt rather than shipping a sentence as a "label".
+        if not label or "\n" in label or len(label) > 60:
+            logger.warning(
+                "Local LLM gave an unusable label for cluster %d, using fallback: %r", cluster_id, label
+            )
             return fallback
         logger.info("Cluster %d (%d items, local LLM): %s", cluster_id, len(items), label)
         return label

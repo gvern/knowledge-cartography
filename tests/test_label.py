@@ -153,6 +153,37 @@ def test_local_llm_falls_back_to_keywords_on_failure(monkeypatch):
     assert result[0].cluster_label == "Great / Hiking / Trail"
 
 
+def test_local_llm_rejects_refusals_and_rambles_falling_back_to_keywords(monkeypatch):
+    # Observed in practice against real Messenger clusters: an 8B local model
+    # sometimes refuses ("I cannot provide a label that describes the
+    # explicit content...") or rambles multi-line instead of a short label.
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="llama3.1:8b")
+    items = [_item(0, "A great hiking trail", source=SourcePlatform.MESSENGER)]
+
+    ollama_client = MagicMock()
+    ollama_client.chat.return_value = _ollama_response(
+        "I cannot provide a label that describes the explicit content of the messages."
+    )
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    assert result[0].cluster_label == "Great / Hiking / Trail"
+
+
+def test_local_llm_rejects_multiline_responses(monkeypatch):
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="llama3.1:8b")
+    items = [_item(0, "A great hiking trail", source=SourcePlatform.MESSENGER)]
+
+    ollama_client = MagicMock()
+    ollama_client.chat.return_value = _ollama_response("Well, thinking about it...\n\nHiking")
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    assert result[0].cluster_label == "Great / Hiking / Trail"
+
+
 def test_label_clusters_uses_local_llm_for_every_cluster_without_api_key(monkeypatch):
     settings = Settings(anthropic_api_key=None, ollama_chat_model="llama3.1:8b")
     items = [_item(0, "A public article about hiking")]  # not Messenger — still routed locally
