@@ -368,11 +368,17 @@ def _conversation_summaries(items: list[ClusteredItem]) -> dict[str, dict]:
                 "count": 0,
                 "first": when,
                 "last": when,
+                "x": [],
+                "y": [],
+                "z": [],
             },
         )
         summary["count"] += 1
         summary["first"] = min(summary["first"], when)
         summary["last"] = max(summary["last"], when)
+        summary["x"].append(item.x)
+        summary["y"].append(item.y)
+        summary["z"].append(item.z)
     return summaries
 
 
@@ -497,6 +503,8 @@ def _item_detail(item: ClusteredItem) -> dict:
         "collections": item.collections,
         "sender": item.sender,
         "when": item.timestamp.strftime("%d %b %Y %H:%M") if item.timestamp else "",
+        "thread_id": item.thread_id,
+        "thread": item.thread,
     }
 
 
@@ -553,6 +561,9 @@ def _render_page(
             "idx": i,
             "first": c["first"].isoformat(),
             "last": c["last"].isoformat(),
+            "x": c["x"],
+            "y": c["y"],
+            "z": c["z"],
         }
         for i, c in enumerate(conversation_rows_data)
     ]
@@ -586,6 +597,7 @@ def _render_page(
     --text-muted: {_TEXT_MUTED};
     --accent: {_ACCENT};
     --accent-glow: rgba(57, 135, 229, 0.45);
+    --highlight: {_HIGHLIGHT_COLOR};
     --hairline: {_HAIRLINE};
   }}
   * {{ box-sizing: border-box; }}
@@ -842,6 +854,14 @@ def _render_page(
     transition: background 0.12s ease;
   }}
   .cg-chip:hover {{ background: rgba(57, 135, 229, 0.15); }}
+  /* Same shape as a collection chip, but in the highlight gold — this one
+  jumps to the Conversations tab, not the Collections one, and shares its
+  color with the highlight ring so the connection reads at a glance. */
+  .cg-chip-thread {{
+    border-color: var(--highlight);
+    color: var(--highlight);
+  }}
+  .cg-chip-thread:hover {{ background: rgba(201, 133, 0, 0.15); }}
   .cg-inspector-footer {{
     padding: 10px 14px;
     border-top: 1px solid var(--hairline);
@@ -933,6 +953,7 @@ def _render_page(
   const conversationRows = document.querySelectorAll("#cg-list-conversations .cg-row");
   const clustersById = new Map(CG_CLUSTERS.map((c) => [c.id, c]));
   const collectionsByName = new Map(CG_COLLECTIONS.map((c, i) => [c.name, i]));
+  const conversationsByThreadId = new Map(CG_CONVERSATIONS.map((c) => [c.id, c]));
 
   // The map (3D, hundreds of thousands of points) and the timeline (same
   // scale) are each expensive to build — eagerly building both at once was
@@ -1032,6 +1053,13 @@ def _render_page(
       "yaxis.range": [c.idx - 0.6, c.idx + 0.6],
       "xaxis.range": [new Date(first - padMs), new Date(last + padMs)],
     }});
+    // Cross-link: this conversation's messages, wherever they land in the
+    // topic map — same highlight ring collections/search use, so switching
+    // to the Clusters tab shows where this thread's topics actually sit.
+    deselectCollection();
+    searchInput.value = "";
+    searchCount.textContent = "";
+    setHighlight(c.x, c.y, c.z);
   }}
 
   // --- highlight: shared by collections and full-text search (one active at a time) ---
@@ -1142,12 +1170,15 @@ def _render_page(
     row.addEventListener("click", () => selectCollection(Number(row.dataset.idx), row));
   }});
 
+  function selectConversation(idx) {{
+    conversationRows.forEach((r) => r.classList.remove("cg-active"));
+    const row = conversationRows[idx];
+    if (row) row.classList.add("cg-active");
+    zoomToConversation(CG_CONVERSATIONS[idx]);
+  }}
+
   conversationRows.forEach((row) => {{
-    row.addEventListener("click", () => {{
-      conversationRows.forEach((r) => r.classList.remove("cg-active"));
-      row.classList.add("cg-active");
-      zoomToConversation(CG_CONVERSATIONS[Number(row.dataset.idx)]);
-    }});
+    row.addEventListener("click", () => selectConversation(Number(row.dataset.idx)));
   }});
 
   // --- inspector: persistent panel on point click (replaces the old auto-hiding toast —
@@ -1164,6 +1195,17 @@ def _render_page(
       : `${{detail.cluster}} · ${{detail.source}} (${{detail.type}})`;
     inspectorBody.textContent = detail.text || "(no text)";
     inspectorCollections.innerHTML = "";
+    if (detail.thread_id && conversationsByThreadId.has(detail.thread_id)) {{
+      const conversation = conversationsByThreadId.get(detail.thread_id);
+      const chip = document.createElement("span");
+      chip.className = "cg-chip cg-chip-thread";
+      chip.textContent = detail.thread || conversation.label;
+      chip.addEventListener("click", () => {{
+        activateTab("conversations");
+        selectConversation(conversation.idx);
+      }});
+      inspectorCollections.appendChild(chip);
+    }}
     (detail.collections || []).forEach((name) => {{
       const chip = document.createElement("span");
       chip.className = "cg-chip";

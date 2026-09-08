@@ -153,6 +153,26 @@ def _message(id_, thread_id, thread, sender, content, when, cluster_id=0):
     )
 
 
+def test_build_map_carries_conversation_coords_for_cross_linking_to_the_map(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    a = _message("a", "t1", "Group", "Someone", "hi", datetime(2021, 7, 13, 10, 0))
+    a.x, a.y, a.z = 1.0, 2.0, 3.0
+    b = _message("b", "t1", "Group", "Someone else", "hey", datetime(2021, 7, 13, 10, 5))
+    b.x, b.y, b.z = 4.0, 5.0, 6.0
+
+    path = build_map([a, b], settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    # conversation_data carries per-message coords, used to highlight this
+    # thread's points on the 3D map from the sidebar or the inspector chip.
+    assert '"x": [1.0, 4.0]' in rendered
+    assert '"y": [2.0, 5.0]' in rendered
+    assert '"z": [3.0, 6.0]' in rendered
+    assert "conversationsByThreadId" in rendered
+    assert "cg-chip-thread" in rendered
+    assert '"thread_id":"t1"' in rendered  # _item_detail carries it for the reciprocal chip
+
+
 def test_build_map_defaults_to_conversations_tab_when_messages_present(tmp_path):
     settings = Settings(output_dir=tmp_path / "output")
     items = [
