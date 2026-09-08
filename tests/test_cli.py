@@ -40,6 +40,37 @@ def test_export_command_writes_json_and_markdown(tmp_path, monkeypatch):
     assert (tmp_path / "output" / "notes" / "index.md").exists()
 
 
+def test_cluster_relabel_reuses_cached_clustering_but_recomputes_labels(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli_module.settings, "chroma_dir", tmp_path / "chroma")
+    monkeypatch.setattr(cli_module.settings, "output_dir", tmp_path / "output")
+    collection = get_collection(cli_module.settings)
+    n = 12  # UMAP needs enough points to build a manifold graph — 2 points degenerates.
+    collection.add(
+        ids=[f"id{i}" for i in range(n)],
+        embeddings=[[float(i), float(i % 3)] for i in range(n)],
+        documents=[f"doc {i}" for i in range(n)],
+        metadatas=[{"source": "bookmark", "item_type": "bookmark"} for _ in range(n)],
+    )
+    runner = CliRunner()
+    first = runner.invoke(cli, ["cluster"])
+    assert first.exit_code == 0, first.output
+
+    monkeypatch.setattr(cli_module, "cluster_items", MagicMock(side_effect=AssertionError("recomputed")))
+
+    def fake_label_clusters(items, settings):
+        for item in items:
+            item.cluster_label = "Relabeled"
+        return items
+
+    monkeypatch.setattr(cli_module, "label_clusters", fake_label_clusters)
+
+    second = runner.invoke(cli, ["cluster", "--relabel"])
+
+    assert second.exit_code == 0, second.output
+    cache = cli_module.load_cluster_cache(cli_module.settings)
+    assert all(item.cluster_label == "Relabeled" for item in cache if item.cluster_id != -1)
+
+
 def test_search_command_prints_results(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_module.settings, "chroma_dir", tmp_path / "chroma")
     monkeypatch.setattr(cli_module.settings, "output_dir", tmp_path / "output")

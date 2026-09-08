@@ -43,7 +43,9 @@ can't safely see — chiefly Messenger-only clusters, where raw TF-IDF keywords
 ("Https / Www / Soirée") were the only prior fallback and read as noise, not a
 topic. Empty string disables it (straight to keyword labels). See the
 Messenger policy bullet below for why this is the right place for that model,
-not the Anthropic one.
+not the Anthropic one. `cartography cluster --relabel` reapplies labeling
+(e.g. after changing this or adding an Anthropic key) by reusing the cached
+UMAP/HDBSCAN result instead of a full recompute.
 
 ## Structure
 

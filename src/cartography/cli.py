@@ -101,15 +101,25 @@ def ingest(instagram_dir, facebook_dir, google_dir, messenger_dir, bookmarks_pat
     help="Skip UMAP/HDBSCAN/labeling and re-render from the previous run's cached result "
     "(fast — for iterating on the map's HTML/JS only)",
 )
-def cluster(no_label, output_name, from_cache) -> None:
+@click.option(
+    "--relabel",
+    is_flag=True,
+    help="Reuse the previous run's UMAP/HDBSCAN result from cache but recompute labels "
+    "(e.g. after changing CARTOGRAPHY_OLLAMA_CHAT_MODEL or adding an Anthropic key) — "
+    "implies --from-cache, much cheaper than a full recompute",
+)
+def cluster(no_label, output_name, from_cache, relabel) -> None:
     """Reduce embeddings to 2D, cluster them, and render an interactive map."""
-    items = load_cluster_cache(settings) if from_cache else None
+    items = load_cluster_cache(settings) if (from_cache or relabel) else None
     if items is None:
-        if from_cache:
+        if from_cache or relabel:
             click.echo("No cache found, computing from scratch")
         items = cluster_items(settings)
         if not no_label:
             items = label_clusters(items, settings)
+        save_cluster_cache(items, settings)
+    elif relabel and not no_label:
+        items = label_clusters(items, settings)
         save_cluster_cache(items, settings)
     path = build_map(items, settings, output_name)
     click.echo(f"Map written to {path}")
