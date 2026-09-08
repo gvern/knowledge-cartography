@@ -6,7 +6,7 @@ import click
 
 from .cluster import cluster_items, load_cluster_cache, save_cluster_cache
 from .config import settings
-from .embed import embed_items, get_collection, get_embedder
+from .embed import embed_items, get_collection, semantic_search
 from .export import write_graph_json, write_markdown_vault
 from .ingest import facebook, google, instagram, messenger
 from .ingest.enrich import enrich_items
@@ -168,25 +168,26 @@ def export_cmd(export_format, json_output_name, notes_dir, k_neighbors, from_cac
 def search(query, limit) -> None:
     """Semantic search over the local vector store — a quick way for the user or
     an agent to query the second brain without opening the map."""
-    vector = get_embedder(settings).embed([query])[0]
-    results = get_collection(settings).query(query_embeddings=[vector], n_results=limit)
-
-    ids = results["ids"][0]
-    if not ids:
+    results = semantic_search(query, settings, limit)
+    if not results:
         click.echo("No results.")
         return
 
-    documents = results["documents"][0]
-    metadatas = results["metadatas"][0]
-    distances = results["distances"][0]
-    for i, (document, metadata, distance) in enumerate(
-        zip(documents, metadatas, distances, strict=True), start=1
-    ):
-        title = metadata.get("title") or (document or "")[:80]
-        source = metadata.get("source", "")
-        click.echo(f"{i}. [{distance:.3f}] ({source}) {title}")
-        if metadata.get("url"):
-            click.echo(f"   {metadata['url']}")
+    for i, result in enumerate(results, start=1):
+        title = result["title"] or result["text"][:80]
+        click.echo(f"{i}. [{result['distance']:.3f}] ({result['source']}) {title}")
+        if result["url"]:
+            click.echo(f"   {result['url']}")
+
+
+@cli.command()
+def mcp() -> None:
+    """Start an MCP server exposing this knowledge graph as tools an agent can
+    call live (search, clusters, collections, stats) — the "second brain"
+    made queryable in conversation, not just as static export files."""
+    from .mcp_server import run
+
+    run()
 
 
 if __name__ == "__main__":

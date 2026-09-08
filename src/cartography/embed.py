@@ -59,6 +59,35 @@ def get_collection(settings: Settings):
     return client.get_or_create_collection("knowledge_items")
 
 
+def semantic_search(query: str, settings: Settings, limit: int = 10) -> list[dict]:
+    """Embed `query` and return the `limit` nearest items from the vector store —
+    the core of the `search` CLI command, factored out so an MCP tool (or any
+    other caller) can reuse it instead of re-implementing the Chroma query."""
+    vector = get_embedder(settings).embed([query])[0]
+    results = get_collection(settings).query(query_embeddings=[vector], n_results=limit)
+
+    ids = results["ids"][0]
+    if not ids:
+        return []
+
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
+    return [
+        {
+            "id": item_id,
+            "distance": distance,
+            "text": document or "",
+            "source": metadata.get("source", ""),
+            "item_type": metadata.get("item_type", ""),
+            "title": metadata.get("title", ""),
+            "url": metadata.get("url") or None,
+            "timestamp": metadata.get("timestamp") or None,
+        }
+        for item_id, document, metadata, distance in zip(ids, documents, metadatas, distances, strict=True)
+    ]
+
+
 def embed_items(
     items: list[KnowledgeItem], settings: Settings, batch_size: int = 32, skip_existing: bool = False
 ) -> int:

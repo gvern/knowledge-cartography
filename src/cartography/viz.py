@@ -5,7 +5,9 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import plotly.graph_objects as go
+from sklearn.neighbors import NearestNeighbors
 
 from .config import Settings
 from .schema import ClusteredItem, SourcePlatform
@@ -56,14 +58,22 @@ def build_map(
 
     summaries = _cluster_summaries(items)
     top_clusters = sorted(summaries.values(), key=lambda c: -c["count"])[:_MAX_DIRECT_LABELS]
+    edges_trace = _constellation_trace(summaries)
+    if edges_trace is not None:
+        fig.add_trace(edges_trace)
     fig.add_trace(_anchor_trace(summaries.values()))
     fig.add_trace(_collection_highlight_trace())
 
     collections = _collections_summary(items)
 
     fig.update_layout(
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        scene=dict(
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            bgcolor=_SURFACE,
+            annotations=[_cluster_annotation(c) for c in top_clusters],
+        ),
         showlegend=True,
         legend=dict(
             itemsizing="constant",
@@ -71,10 +81,8 @@ def build_map(
             font=dict(color=_TEXT_SECONDARY),
         ),
         paper_bgcolor=_PAGE,
-        plot_bgcolor=_SURFACE,
         autosize=True,
         margin=dict(l=0, r=0, t=0, b=0),
-        annotations=[_cluster_annotation(c) for c in top_clusters],
         hoverlabel=dict(bgcolor=_SURFACE, font=dict(color=_TEXT_PRIMARY)),
     )
 
@@ -115,16 +123,17 @@ def build_map(
 
 def _platform_trace(
     items: list[ClusteredItem], platform_name: str, color: str, is_noise: bool
-) -> go.Scattergl:
-    return go.Scattergl(
+) -> go.Scatter3d:
+    return go.Scatter3d(
         x=[item.x for item in items],
         y=[item.y for item in items],
+        z=[item.z for item in items],
         mode="markers",
         name=f"{platform_name} (unclustered)" if is_noise else platform_name,
         showlegend=not is_noise,
         legendgroup=platform_name,
         marker=dict(
-            size=4 if is_noise else 8,
+            size=3 if is_noise else 5,
             opacity=0.25 if is_noise else 0.8,
             color=color,
             line=dict(width=0.3, color=_SURFACE),
@@ -135,16 +144,13 @@ def _platform_trace(
     )
 
 
-def _anchor_trace(cluster_values) -> go.Scatter:
-    """One clickable beacon per cluster centroid — the on-map selection target.
-
-    Plain SVG Scatter (not Scattergl): only ~hundreds of points, and SVG gives
-    more reliable click hit-testing than WebGL for a deliberate selector UI.
-    """
+def _anchor_trace(cluster_values) -> go.Scatter3d:
+    """One clickable beacon per cluster centroid — the on-map selection target."""
     clusters: list[dict] = list(cluster_values)
-    return go.Scatter(
+    return go.Scatter3d(
         x=[c["cx"] for c in clusters],
         y=[c["cy"] for c in clusters],
+        z=[c["cz"] for c in clusters],
         mode="markers",
         name="cluster-anchors",
         showlegend=False,
@@ -153,30 +159,77 @@ def _anchor_trace(cluster_values) -> go.Scatter:
         hoverinfo="text",
         marker=dict(
             symbol="diamond",
-            size=13,
+            size=6,
             color=_ACCENT,
-            opacity=0.85,
+            opacity=0.9,
             line=dict(width=1, color=_TEXT_PRIMARY),
         ),
     )
 
 
-def _collection_highlight_trace() -> go.Scattergl:
-    """Empty at load; the JS side populates x/y via Plotly.restyle when a
+def _constellation_trace(summaries: dict[int, dict]) -> go.Scatter3d | None:
+    """Thin lines from each cluster centroid to its ~2 nearest neighboring
+    centroids — turns the map from a cloud of dots into an actual
+    *cartography*, where topically adjacent regions are visibly connected.
+    Same nearest-neighbor-over-centroids approach as a k-NN graph, just drawn
+    rather than exported; one line-mode trace with `None` separators keeps
+    this to a single draw call instead of one trace per edge.
+    """
+    clusters = list(summaries.values())
+    if len(clusters) < 2:
+        return None
+
+    coords = np.array([[c["cx"], c["cy"], c["cz"]] for c in clusters])
+    n_neighbors = min(3, len(clusters))
+    _, indices = NearestNeighbors(n_neighbors=n_neighbors).fit(coords).kneighbors(coords)
+
+    seen: set[tuple[int, int]] = set()
+    xs: list[float | None] = []
+    ys: list[float | None] = []
+    zs: list[float | None] = []
+    for i, neighbor_idx in enumerate(indices):
+        for j in neighbor_idx:
+            if i == j:
+                continue
+            pair = (i, int(j)) if i < j else (int(j), i)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            a, b = clusters[pair[0]], clusters[pair[1]]
+            xs += [a["cx"], b["cx"], None]
+            ys += [a["cy"], b["cy"], None]
+            zs += [a["cz"], b["cz"], None]
+
+    return go.Scatter3d(
+        x=xs,
+        y=ys,
+        z=zs,
+        mode="lines",
+        name="constellation-edges",
+        showlegend=False,
+        hoverinfo="skip",
+        line=dict(width=1.5, color=_ACCENT),
+        opacity=0.22,
+    )
+
+
+def _collection_highlight_trace() -> go.Scatter3d:
+    """Empty at load; the JS side populates x/y/z via Plotly.restyle when a
     collection is selected. Collections are the user's own curation and aren't
     spatially coherent the way an HDBSCAN cluster is, so instead of zooming to
     a (possibly huge, scattered) bounding box, selected items are highlighted
     in place across the whole map.
     """
-    return go.Scattergl(
+    return go.Scatter3d(
         x=[],
         y=[],
+        z=[],
         mode="markers",
         name="collection-highlight",
         showlegend=False,
         hoverinfo="skip",
         marker=dict(
-            size=11,
+            size=8,
             color="rgba(0,0,0,0)",
             line=dict(width=2, color=_TEXT_PRIMARY),
         ),
@@ -187,10 +240,11 @@ def _collections_summary(items: list[ClusteredItem]) -> dict[str, dict]:
     summaries: dict[str, dict] = {}
     for item in items:
         for name in item.collections:
-            summary = summaries.setdefault(name, {"name": name, "count": 0, "x": [], "y": []})
+            summary = summaries.setdefault(name, {"name": name, "count": 0, "x": [], "y": [], "z": []})
             summary["count"] += 1
             summary["x"].append(item.x)
             summary["y"].append(item.y)
+            summary["z"].append(item.z)
     return summaries
 
 
@@ -209,8 +263,11 @@ def _cluster_summaries(items: list[ClusteredItem]) -> dict[int, dict]:
                 "x_max": item.x,
                 "y_min": item.y,
                 "y_max": item.y,
+                "z_min": item.z,
+                "z_max": item.z,
                 "x_sum": 0.0,
                 "y_sum": 0.0,
+                "z_sum": 0.0,
             },
         )
         summary["count"] += 1
@@ -218,13 +275,17 @@ def _cluster_summaries(items: list[ClusteredItem]) -> dict[int, dict]:
         summary["x_max"] = max(summary["x_max"], item.x)
         summary["y_min"] = min(summary["y_min"], item.y)
         summary["y_max"] = max(summary["y_max"], item.y)
+        summary["z_min"] = min(summary["z_min"], item.z)
+        summary["z_max"] = max(summary["z_max"], item.z)
         summary["x_sum"] += item.x
         summary["y_sum"] += item.y
+        summary["z_sum"] += item.z
 
     for summary in summaries.values():
         summary["cx"] = summary["x_sum"] / summary["count"]
         summary["cy"] = summary["y_sum"] / summary["count"]
-        del summary["x_sum"], summary["y_sum"]
+        summary["cz"] = summary["z_sum"] / summary["count"]
+        del summary["x_sum"], summary["y_sum"], summary["z_sum"]
 
     return summaries
 
@@ -318,6 +379,7 @@ def _cluster_annotation(cluster: dict) -> dict:
     return dict(
         x=cluster["cx"],
         y=cluster["cy"],
+        z=cluster["cz"],
         text=html.escape(cluster["label"]),
         showarrow=False,
         font=dict(color=_ACCENT, size=11, family="system-ui, -apple-system, sans-serif"),
@@ -383,10 +445,13 @@ def _render_page(
             "count": c["count"],
             "cx": c["cx"],
             "cy": c["cy"],
+            "cz": c["cz"],
             "x0": c["x_min"],
             "x1": c["x_max"],
             "y0": c["y_min"],
             "y1": c["y_max"],
+            "z0": c["z_min"],
+            "z1": c["z_max"],
         }
         for c in rows
     ]
@@ -398,7 +463,8 @@ def _render_page(
 
     collection_rows_data = sorted(collections.values(), key=lambda c: -c["count"])
     collection_data = [
-        {"name": c["name"], "count": c["count"], "x": c["x"], "y": c["y"]} for c in collection_rows_data
+        {"name": c["name"], "count": c["count"], "x": c["x"], "y": c["y"], "z": c["z"]}
+        for c in collection_rows_data
     ]
     collection_rows = "\n".join(
         f'<li class="cg-row" data-idx="{i}"><span class="cg-row-label">{html.escape(c["name"])}</span>'
@@ -729,7 +795,7 @@ def _render_page(
 <header>
   <h1>Knowledge Cartography</h1>
   <span class="cg-sub">
-    click a conversation (timeline or list) to focus it — click a point to open it
+    drag to orbit, scroll to zoom — click a conversation to focus it, click a point to open it
   </span>
   <span class="cg-stats">
     <span><b>{total_items:,}</b> items</span>
@@ -780,8 +846,6 @@ def _render_page(
   const CG_CLUSTERS = {json.dumps(sidebar_data)};
   const CG_COLLECTIONS = {json.dumps(collection_data)};
   const CG_CONVERSATIONS = {json.dumps(conversation_data)};
-  const CG_ACCENT = {json.dumps(_ACCENT)};
-  const CG_MAX_LABELS = {_MAX_DIRECT_LABELS};
   const plotDiv = document.getElementById("cg-plot");
   const timelineDiv = document.getElementById("cg-timeline-plot");
   const searchInput = document.getElementById("cg-search");
@@ -793,18 +857,22 @@ def _render_page(
   const collectionsByName = new Map(CG_COLLECTIONS.map((c, i) => [c.name, i]));
   const highlightTraceIndex = plotDiv.data.findIndex((t) => t.name === "collection-highlight");
 
-  function escapeHtml(text) {{
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-  }}
+  // Plotly's own embedded init script runs the moment the parser reaches it —
+  // before the sidebar further down in the document has been parsed, so a 3D
+  // scene sizes itself off the pre-flex (full-window) container width and
+  // visually overlaps the sidebar. This script tag runs last (after the whole
+  // document, sidebar included, is parsed and laid out), so re-measuring here
+  // catches the real, flex-resolved size.
+  Plotly.Plots.resize(plotDiv);
 
   function zoomToCluster(c) {{
     const padX = Math.max((c.x1 - c.x0) * 0.4, 0.5);
     const padY = Math.max((c.y1 - c.y0) * 0.4, 0.5);
+    const padZ = Math.max((c.z1 - c.z0) * 0.4, 0.5);
     Plotly.relayout(plotDiv, {{
-      "xaxis.range": [c.x0 - padX, c.x1 + padX],
-      "yaxis.range": [c.y0 - padY, c.y1 + padY],
+      "scene.xaxis.range": [c.x0 - padX, c.x1 + padX],
+      "scene.yaxis.range": [c.y0 - padY, c.y1 + padY],
+      "scene.zaxis.range": [c.z0 - padZ, c.z1 + padZ],
     }});
   }}
 
@@ -826,10 +894,10 @@ def _render_page(
   // Neither is spatially coherent the way an HDBSCAN cluster is, so matches are
   // highlighted in place across the whole map rather than zoomed to.
   function clearHighlight() {{
-    Plotly.restyle(plotDiv, {{ x: [[]], y: [[]] }}, [highlightTraceIndex]);
+    Plotly.restyle(plotDiv, {{ x: [[]], y: [[]], z: [[]] }}, [highlightTraceIndex]);
   }}
-  function setHighlight(xs, ys) {{
-    Plotly.restyle(plotDiv, {{ x: [xs], y: [ys] }}, [highlightTraceIndex]);
+  function setHighlight(xs, ys, zs) {{
+    Plotly.restyle(plotDiv, {{ x: [xs], y: [ys], z: [zs] }}, [highlightTraceIndex]);
   }}
 
   let activeCollectionIdx = null;
@@ -850,7 +918,7 @@ def _render_page(
     activeCollectionIdx = idx;
     row.classList.add("cg-active");
     const c = CG_COLLECTIONS[idx];
-    setHighlight(c.x, c.y);
+    setHighlight(c.x, c.y, c.z);
   }}
 
   // --- tabs: switch between browsing conversations, clusters, and collections ---
@@ -882,12 +950,13 @@ def _render_page(
 
   // --- full-text search index: built once from data already loaded for hover/click,
   // no extra payload — every point's full text already ships in its customdata. ---
+  const CG_NON_ITEM_TRACES = new Set(["cluster-anchors", "collection-highlight", "constellation-edges"]);
   const searchIndex = [];
   plotDiv.data.forEach((trace) => {{
-    if (trace.name === "cluster-anchors" || trace.name === "collection-highlight") return;
+    if (CG_NON_ITEM_TRACES.has(trace.name)) return;
     (trace.customdata || []).forEach((detail, i) => {{
       if (detail && typeof detail === "object" && detail.text) {{
-        searchIndex.push({{ x: trace.x[i], y: trace.y[i], text: detail.text.toLowerCase() }});
+        searchIndex.push({{ x: trace.x[i], y: trace.y[i], z: trace.z[i], text: detail.text.toLowerCase() }});
       }}
     }});
   }});
@@ -903,7 +972,7 @@ def _render_page(
     const matches = searchIndex.filter((entry) => entry.text.includes(q));
     const n = matches.length;
     searchCount.textContent = `${{n.toLocaleString()}} item${{n === 1 ? "" : "s"}} match`;
-    setHighlight(matches.map((m) => m.x), matches.map((m) => m.y));
+    setHighlight(matches.map((m) => m.x), matches.map((m) => m.y), matches.map((m) => m.z));
   }}
 
   // --- sidebar: search (scoped to whichever tab is active) + click-to-zoom + content search ---
@@ -1010,49 +1079,6 @@ def _render_page(
       (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
     );
     if (detailPoint) openInspector(detailPoint.customdata);
-  }});
-
-  // --- map: labels stay legible while zooming — recompute what's visible ---
-  function buildAnnotation(c) {{
-    return {{
-      x: c.cx,
-      y: c.cy,
-      text: escapeHtml(c.label),
-      showarrow: false,
-      font: {{ color: CG_ACCENT, size: 11, family: "system-ui, -apple-system, sans-serif" }},
-      bgcolor: "rgba(13,13,13,0.65)",
-      bordercolor: "rgba(57,135,229,0.4)",
-      borderwidth: 1,
-      borderpad: 3,
-      opacity: 0.9,
-    }};
-  }}
-
-  let lastAnnotationKey = "";
-  function updateVisibleLabels() {{
-    const xr = plotDiv.layout && plotDiv.layout.xaxis && plotDiv.layout.xaxis.range;
-    const yr = plotDiv.layout && plotDiv.layout.yaxis && plotDiv.layout.yaxis.range;
-    let visible = CG_CLUSTERS;
-    if (xr && yr) {{
-      const [x0, x1] = xr;
-      const [y0, y1] = yr;
-      visible = CG_CLUSTERS.filter((c) => c.cx >= x0 && c.cx <= x1 && c.cy >= y0 && c.cy <= y1);
-    }}
-    visible = visible.slice().sort((a, b) => b.count - a.count).slice(0, CG_MAX_LABELS);
-    const key = visible.map((c) => c.id).join(",");
-    if (key === lastAnnotationKey) return;
-    lastAnnotationKey = key;
-    Plotly.relayout(plotDiv, {{ annotations: visible.map(buildAnnotation) }});
-  }}
-
-  let debounceTimer;
-  plotDiv.on("plotly_relayout", (eventdata) => {{
-    const isAxisChange = Object.keys(eventdata || {{}}).some(
-      (k) => k.startsWith("xaxis.") || k.startsWith("yaxis.")
-    );
-    if (!isAxisChange) return;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(updateVisibleLabels, 120);
   }});
 </script>
 </body>

@@ -3,10 +3,12 @@
 Builds an interactive 3D map of a personal knowledge graph from social media
 exports (Instagram, Facebook, Messenger) and browsing history (Google
 Takeout, HTML bookmarks). Pipeline: ingest → embed (Ollama or Vertex AI) →
-UMAP → HDBSCAN → label clusters via the Anthropic API → render an HTML map
-(Plotly), and/or export the same clustered knowledge as a structured JSON
-graph and an Obsidian-style Markdown vault for a second brain / agent to
-consume directly.
+UMAP → HDBSCAN → label clusters via the Anthropic API → render an orbitable
+3D HTML map (Plotly `Scatter3d`, with constellation lines between
+topically-adjacent clusters), and/or export the same clustered knowledge as
+a structured JSON graph and an Obsidian-style Markdown vault, and/or serve it
+live over MCP — three ways for a second brain / agent to consume it: static
+file, or a queryable tool in conversation.
 
 ## Commands
 
@@ -20,6 +22,7 @@ uv run cartography cluster
 uv run cartography export --format both   # knowledge_graph.json + notes/ Markdown vault
 uv run cartography search "<query>"       # semantic search over the vector store
 uv run cartography stats
+uv run cartography mcp                    # MCP server over stdio (needs `uv sync --extra mcp`)
 ```
 
 CI (`.github/workflows/ci.yml`) runs all four checks above on push/PR to
@@ -43,9 +46,10 @@ src/cartography/
 ├── schema.py           # KnowledgeItem / ClusteredItem (pydantic)
 ├── embed.py             # Ollama or Vertex AI -> ChromaDB
 ├── cluster.py             # UMAP + HDBSCAN
-├── label.py                 # cluster naming via the Anthropic API
-├── viz.py                    # Plotly HTML map
+├── label.py                 # cluster naming via the Anthropic API + shared keyword_tags()
+├── viz.py                    # Plotly 3D HTML map (Scatter3d + constellation edges)
 ├── export.py                  # JSON graph (nodes/edges/clusters) + Markdown vault
+├── mcp_server.py               # MCP server: live tool access to the graph for an agent
 └── ingest/
     ├── instagram.py           # saved/liked posts (GDPR JSON export)
     ├── facebook.py              # saved items + followed pages (GDPR JSON, format varies by version)
@@ -76,3 +80,9 @@ tests/                                # mirrors src/, one test module per ingest
   already embedded in the map's page data, just reshaped, so no additional
   Messenger restriction applies there. If `export.py` ever grows a mode that
   calls a network API, apply the same Messenger exclusion as `label.py`.
+- `mcp_server.py` is a network-facing surface the same way `label.py` is —
+  its tool results are read by whatever LLM is on the other end of the MCP
+  client, often a cloud model. Every tool there excludes
+  `SourcePlatform.MESSENGER` items unconditionally (`_visible_items`), same
+  policy, same reasoning. Give any future sensitive source the same
+  treatment there too, not a one-off.

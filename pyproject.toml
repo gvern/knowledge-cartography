@@ -1,7 +1,7 @@
 [project]
 name = "knowledge-cartography"
 version = "0.1.0"
-description = "Build an interactive 2D map of your personal knowledge graph from social media exports and browsing history."
+description = "Build an interactive 3D map of your personal knowledge graph from social media exports and browsing history."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 local = ["ollama>=0.3"]
 vertex = ["google-cloud-aiplatform>=1.60"]
+mcp = ["mcp>=1.2"]
 
 [dependency-groups]
 dev = [

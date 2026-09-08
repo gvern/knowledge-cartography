@@ -204,6 +204,74 @@ def test_build_map_timeline_excludes_items_without_timestamp(tmp_path):
     assert '"label": "No Timestamp"' not in rendered
 
 
+def test_build_map_renders_true_3d_scene(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        ClusteredItem(
+            id="a",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            title="Example",
+            cluster_id=0,
+            cluster_label="Cooking",
+            x=0.1,
+            y=0.2,
+            z=1.5,
+        ),
+        ClusteredItem(
+            id="b",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            title="Another",
+            cluster_id=1,
+            cluster_label="Travel",
+            x=3.0,
+            y=3.0,
+            z=-2.0,
+        ),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert '"type":"scatter3d"' in rendered  # real 3D traces, not flattened scattergl
+    assert '"scene"' in rendered  # layout carries a 3D scene, not 2D xaxis/yaxis
+    assert "scene.xaxis.range" in rendered  # click-to-zoom targets the 3D scene
+    assert "scene.zaxis.range" in rendered
+    assert "1.5" in rendered and "-2.0" in rendered  # z coordinates actually shipped to the browser
+
+
+def test_build_map_draws_constellation_edges_between_clusters(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        ClusteredItem(
+            id="a",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            cluster_id=0,
+            cluster_label="Cooking",
+            x=0.0,
+            y=0.0,
+            z=0.0,
+        ),
+        ClusteredItem(
+            id="b",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            cluster_id=1,
+            cluster_label="Travel",
+            x=5.0,
+            y=5.0,
+            z=5.0,
+        ),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert "constellation-edges" in rendered
+
+
 def test_build_map_writes_inspector_panel_markup(tmp_path):
     settings = Settings(output_dir=tmp_path / "output")
     items = [

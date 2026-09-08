@@ -5,10 +5,15 @@ partir de tes exports de réseaux sociaux (posts sauvegardés/likés, pages
 suivies) et de ton historique de navigation (Chrome, YouTube, recherches
 Google, favoris). Chaque élément est transformé en embedding, projeté en 3D
 (UMAP), regroupé par sujet (HDBSCAN), et étiqueté automatiquement via l'API
-Claude. En plus de la carte HTML pour l'œil humain, le même graphe de
-connaissances s'exporte en JSON structuré et en vault Markdown façon
-Obsidian — exploitable par un second cerveau (agent, RAG) sans passer par un
-navigateur.
+Claude (label court + mots-clés). La carte HTML se navigue à la souris —
+orbite, zoom — et relie les clusters proches par des lignes de constellation
+pour donner une vraie lecture spatiale du graphe, pas juste un nuage de
+points.
+
+Pour le second cerveau (agent, RAG), trois façons d'exploiter la même
+connaissance sans passer par un navigateur : export JSON structuré, vault
+Markdown façon Obsidian, ou un serveur MCP qui expose le graphe comme des
+outils interrogeables en direct dans une conversation.
 
 ## Structure
 
@@ -19,9 +24,10 @@ src/cartography/
 ├── schema.py         # KnowledgeItem + ClusteredItem (Pydantic)
 ├── embed.py           # Ollama ou Vertex AI -> ChromaDB
 ├── cluster.py          # UMAP + HDBSCAN
-├── label.py              # nommage automatique des clusters via l'API Claude
-├── viz.py                 # carte HTML interactive (Plotly)
+├── label.py              # nommage automatique des clusters via l'API Claude + mots-clés
+├── viz.py                 # carte HTML 3D interactive (Plotly Scatter3d + constellation)
 ├── export.py               # graphe JSON (nodes/edges/clusters) + vault Markdown
+├── mcp_server.py            # serveur MCP : accès en direct au graphe pour un agent
 └── ingest/
     ├── instagram.py        # posts sauvegardés/likés (export GDPR JSON)
     ├── facebook.py           # éléments sauvegardés + pages suivies
@@ -79,6 +85,19 @@ cartography search "recette de pâtes"
 # Statistiques sur la base vectorielle
 cartography stats
 ```
+
+### Second cerveau en direct (MCP)
+
+```bash
+uv sync --extra mcp
+claude mcp add cartography -- uv run --directory /chemin/vers/knowledge-cartography cartography mcp
+```
+
+Expose le graphe comme outils qu'un agent peut appeler en conversation :
+`search_knowledge`, `list_clusters`, `get_cluster`, `list_collections`,
+`get_collection_items`, `stats`. Comme pour le labeling, le contenu
+Messenger est exclu de tout ce que ces outils renvoient — voir la
+convention dans `CLAUDE.md`.
 
 Les exports Instagram/Facebook s'obtiennent via "Télécharger vos
 informations" (format JSON), et l'export Google via

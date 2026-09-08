@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
 from .config import Settings
+from .label import keyword_tags
 from .schema import ClusteredItem
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ def build_graph(items: list[ClusteredItem], k_neighbors: int = 6) -> dict:
     loaded by another tool (an agent, a RAG pipeline, a script) rather than a
     browser. The HTML map already carries this same data for a human; this is
     the same underlying knowledge, reshaped for machine consumption."""
-    clusters = _cluster_summaries(items)
+    clusters = cluster_summaries(items)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_items": len(items),
@@ -72,7 +73,10 @@ def _node(item: ClusteredItem) -> dict:
     }
 
 
-def _cluster_summaries(items: list[ClusteredItem]) -> list[dict]:
+def cluster_summaries(items: list[ClusteredItem]) -> list[dict]:
+    """Per-cluster metadata (label, tags, size, centroid, sources, date range) —
+    shared by the JSON graph export and the MCP server's `list_clusters`/
+    `get_cluster` tools, so both surfaces describe a cluster identically."""
     by_cluster: dict[int, list[ClusteredItem]] = defaultdict(list)
     for item in items:
         if item.cluster_id != -1:
@@ -86,6 +90,7 @@ def _cluster_summaries(items: list[ClusteredItem]) -> list[dict]:
             {
                 "id": cluster_id,
                 "label": cluster_items[0].cluster_label,
+                "tags": keyword_tags(cluster_items),
                 "size": n,
                 "centroid": {
                     "x": sum(i.x for i in cluster_items) / n,
@@ -230,6 +235,7 @@ def _write_cluster_note(
 ) -> None:
     timestamps = [i.timestamp for i in cluster_items if i.timestamp]
     related = sorted({name for item in cluster_items for name in item.collections})
+    tags = keyword_tags(cluster_items)
 
     lines = [
         "---",
@@ -237,6 +243,7 @@ def _write_cluster_note(
         f"size: {len(cluster_items)}",
         f"first: {min(timestamps).isoformat() if timestamps else ''}",
         f"last: {max(timestamps).isoformat() if timestamps else ''}",
+        f"tags: [{', '.join(tags)}]",
         "---",
         "",
         f"# {label}",

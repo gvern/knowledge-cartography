@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import anthropic
 
 from cartography.config import Settings
-from cartography.label import _local_keyword_labels, label_clusters
+from cartography.label import _local_keyword_labels, keyword_tags, label_clusters
 from cartography.schema import ClusteredItem, ItemType, SourcePlatform
 
 
@@ -153,6 +153,19 @@ def test_local_keyword_labels_filter_elongated_chat_slang():
 
     assert "mdr" not in labels[0].lower()
     assert "ouii" not in labels[0].lower()
+
+
+def test_keyword_tags_ranks_by_frequency_and_dedupes():
+    items = [_item(0, "pasta pasta pasta garlic bread"), _item(0, "another pasta night")]
+
+    tags = keyword_tags(items, top_n=2)
+
+    assert tags[0].lower() == "pasta"
+    assert len(tags) == 2
+
+
+def test_keyword_tags_empty_for_no_text():
+    assert keyword_tags([_item(0, "")]) == []
 
 
 def test_local_keyword_labels_skip_unclustered_and_empty_text():

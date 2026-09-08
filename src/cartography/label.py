@@ -142,6 +142,34 @@ def _fold(term: str) -> str:
     return folded[:-1] if len(folded) > 4 and folded.endswith("s") else folded
 
 
+def keyword_tags(items: list[ClusteredItem], top_n: int = 5) -> list[str]:
+    """Cheap, dependency-free top keywords for one cluster or collection —
+    plain term frequency using the same tokenizer/stopword/dedup rules as the
+    fallback label below, minus its cross-cluster TF-IDF weighting (there's no
+    "other clusters" to weight against for a single item list). Used to give
+    clusters a few grounding keywords alongside their short label wherever
+    they're surfaced (the map sidebar, the JSON export, the MCP tools) — no
+    model, no network, safe for Messenger content."""
+    counts: Counter[str] = Counter()
+    for item in items:
+        for token in _TOKEN_RE.findall(item.text.lower()):
+            if len(token) < 3 or _is_stopword(token):
+                continue
+            counts[token] += 1
+
+    tags: list[str] = []
+    seen_folded: set[str] = set()
+    for term, _ in counts.most_common():
+        key = _fold(term)
+        if key in seen_folded:
+            continue
+        seen_folded.add(key)
+        tags.append(term.capitalize())
+        if len(tags) == top_n:
+            break
+    return tags
+
+
 def _local_keyword_labels(by_cluster: dict[int, list[ClusteredItem]], top_n: int = 3) -> dict[int, str]:
     """Cheap, dependency-free TF-IDF over clusters-as-documents: term frequency
     within a cluster, weighted down by how many other clusters also use that

@@ -37,6 +37,17 @@ def test_build_graph_includes_nodes_and_clusters():
     assert graph["clusters"][0]["size"] == 2
 
 
+def test_build_graph_clusters_carry_keyword_tags():
+    items = [
+        _item(id="a", content="A great weeknight pasta recipe", x=0.0, y=0.0, z=0.0),
+        _item(id="b", content="Another pasta recipe with garlic", x=0.1, y=0.1, z=0.0),
+    ]
+
+    graph = build_graph(items, k_neighbors=1)
+
+    assert "pasta" in {tag.lower() for tag in graph["clusters"][0]["tags"]}
+
+
 def test_semantic_edges_link_nearby_points():
     items = [_item(id=f"id{i}", x=float(i), y=0.0, z=0.0) for i in range(5)]
 
