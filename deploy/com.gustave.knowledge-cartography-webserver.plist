@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Always-on local static file server for the generated knowledge map, bound
+  to localhost only. tailscale serve (see docs/MACMINI_SETUP.md) proxies
+  this port to the tailnet — Tailscale's sandboxed macOS app can't serve a
+  directory directly, only proxy a port, hence this extra hop.
+
+  Serves ~/.cartography/serve, which CARTOGRAPHY_OUTPUT_DIR points at
+  directly — cartography cluster writes the map straight here, no separate
+  mirroring step. Local disk, not the NAS mount: LaunchAgents 404 reading
+  the SMB mount even though the same command works fine in an interactive
+  shell (macOS sandboxing quirk for background agents on network volumes),
+  and ChromaDB (which shares this reasoning for CARTOGRAPHY_CHROMA_DIR) hit
+  internal compaction errors under sustained writes over SMB. See
+  docs/MACMINI_SETUP.md §4.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gustave.knowledge-cartography-webserver</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-m</string>
+        <string>http.server</string>
+        <string>8642</string>
+        <string>--bind</string>
+        <string>127.0.0.1</string>
+        <string>--directory</string>
+        <string>/Users/gustavevernay/.cartography/serve</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gustavevernay/Library/Logs/cartography/webserver.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gustavevernay/Library/Logs/cartography/webserver.err.log</string>
+</dict>
+</plist>

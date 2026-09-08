@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# runtime data, not source
+/data/
+/output/
+/google takeout/
+
+.DS_Store

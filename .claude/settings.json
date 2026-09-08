@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest*)",
+      "Bash(uv run ruff check*)",
+      "Bash(uv run ruff format*)",
+      "Bash(uv run mypy*)",
+      "Bash(uv run cartography stats)",
+      "Bash(uv sync*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(ollama list)",
+      "Bash(ls*)",
+      "Bash(find*)"
+    ]
+  }
+}
