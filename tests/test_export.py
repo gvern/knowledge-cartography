@@ -65,6 +65,36 @@ def test_semantic_edges_skipped_below_neighbor_count():
     assert [e for e in graph["edges"] if e["type"] == "semantic_neighbor"] == []
 
 
+def test_structural_edges_handle_naive_and_aware_timestamps_together():
+    # Messenger's HTML export format stamps naive datetimes (no timezone in
+    # the source); every other source stamps UTC-aware ones. A real dataset
+    # mixes both in the same items list — comparing them directly raises
+    # TypeError (see KnowledgeItem.comparable_timestamp).
+    items = [
+        _item(
+            id="a",
+            thread_id="t1",
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            x=0.0,
+            y=0.0,
+            z=0.0,
+        ),
+        _item(
+            id="b",
+            thread_id="t1",
+            timestamp=datetime(2024, 1, 2),  # naive
+            x=0.1,
+            y=0.0,
+            z=0.0,
+        ),
+    ]
+
+    graph = build_graph(items, k_neighbors=1)
+
+    types = {(e["source"], e["target"], e["type"]) for e in graph["edges"]}
+    assert ("a", "b", "same_thread") in types
+
+
 def test_structural_edges_chain_shared_collection_and_thread():
     items = [
         _item(id="a", collections=["Recipes"], x=0.0, y=0.0, z=0.0),

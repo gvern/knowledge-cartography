@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -47,6 +47,20 @@ class KnowledgeItem(BaseModel):
     def text(self) -> str:
         parts = [self.title, self.content]
         return "\n".join(p for p in parts if p).strip()
+
+    @property
+    def comparable_timestamp(self) -> datetime | None:
+        """`timestamp`, coerced to timezone-aware for cross-item comparison.
+        Every ingest source stamps UTC-aware timestamps except Messenger's
+        HTML export format, which has no timezone in the source data and is
+        stamped naive (see `ingest/messenger.py`'s `_parse_html_timestamp`)
+        — comparing a naive and an aware datetime raises TypeError. Treating
+        naive as UTC here is an approximation for sorting/grouping only, not
+        a correction to the stored `timestamp` value."""
+        ts = self.timestamp
+        if ts is None:
+            return None
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
 
 
 class ClusteredItem(KnowledgeItem):

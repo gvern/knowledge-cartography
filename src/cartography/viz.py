@@ -296,7 +296,12 @@ def _conversation_summaries(items: list[ClusteredItem]) -> dict[str, dict]:
     place on a time axis) are excluded."""
     summaries: dict[str, dict] = {}
     for item in items:
-        if not item.thread_id or item.timestamp is None:
+        # comparable_timestamp (not timestamp): a thread can mix items from
+        # Messenger's naive-HTML and aware-JSON export formats, and min/max
+        # across a naive and an aware datetime raises TypeError — see
+        # KnowledgeItem.comparable_timestamp.
+        when = item.comparable_timestamp
+        if not item.thread_id or when is None:
             continue
         summary = summaries.setdefault(
             item.thread_id,
@@ -304,13 +309,13 @@ def _conversation_summaries(items: list[ClusteredItem]) -> dict[str, dict]:
                 "thread_id": item.thread_id,
                 "label": item.thread or item.thread_id,
                 "count": 0,
-                "first": item.timestamp,
-                "last": item.timestamp,
+                "first": when,
+                "last": when,
             },
         )
         summary["count"] += 1
-        summary["first"] = min(summary["first"], item.timestamp)
-        summary["last"] = max(summary["last"], item.timestamp)
+        summary["first"] = min(summary["first"], when)
+        summary["last"] = max(summary["last"], when)
     return summaries
 
 

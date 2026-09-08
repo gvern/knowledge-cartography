@@ -22,6 +22,13 @@ _NOTES_DIRNAME = "notes"
 _MIN_TIMESTAMP = datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _sort_timestamp(item: ClusteredItem) -> datetime:
+    """Sort key for chronological ordering across items from every source —
+    see `KnowledgeItem.comparable_timestamp` for why this can't just be
+    `item.timestamp`."""
+    return item.comparable_timestamp or _MIN_TIMESTAMP
+
+
 def build_graph(items: list[ClusteredItem], k_neighbors: int = 6) -> dict:
     """A structured knowledge graph — nodes, clusters, and edges — meant to be
     loaded by another tool (an agent, a RAG pipeline, a script) rather than a
@@ -84,7 +91,7 @@ def cluster_summaries(items: list[ClusteredItem]) -> list[dict]:
 
     clusters = []
     for cluster_id, cluster_items in by_cluster.items():
-        timestamps = [item.timestamp for item in cluster_items if item.timestamp]
+        timestamps = [item.comparable_timestamp for item in cluster_items if item.comparable_timestamp]
         n = len(cluster_items)
         clusters.append(
             {
@@ -139,7 +146,7 @@ def _structural_edges(items: list[ClusteredItem]) -> list[dict]:
     """Edges from groupings that already exist in the source data — shared
     collections (the user's own curation) and shared conversation threads —
     independent of embedding geometry."""
-    ordered = sorted(items, key=lambda item: item.timestamp or _MIN_TIMESTAMP)
+    ordered = sorted(items, key=_sort_timestamp)
 
     by_collection: dict[str, list[str]] = defaultdict(list)
     by_thread: dict[str, list[str]] = defaultdict(list)
@@ -233,7 +240,7 @@ def _write_cluster_note(
     cluster_items: list[ClusteredItem],
     collection_slugs: dict[str, str],
 ) -> None:
-    timestamps = [i.timestamp for i in cluster_items if i.timestamp]
+    timestamps = [i.comparable_timestamp for i in cluster_items if i.comparable_timestamp]
     related = sorted({name for item in cluster_items for name in item.collections})
     tags = keyword_tags(cluster_items)
 
@@ -254,7 +261,7 @@ def _write_cluster_note(
         lines += [f"- [[{collection_slugs[name]}|{name}]]" for name in related]
         lines.append("")
     lines.append("## Items")
-    lines += [_item_line(item) for item in sorted(cluster_items, key=lambda i: i.timestamp or _MIN_TIMESTAMP)]
+    lines += [_item_line(item) for item in sorted(cluster_items, key=_sort_timestamp)]
 
     (notes_dir / f"{slug}.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -275,7 +282,7 @@ def _write_collection_note(
         lines += [f"- [[{cluster_slugs[cid]}|{cluster_labels[cid]}]]" for cid in related]
         lines.append("")
     lines.append("## Items")
-    lines += [_item_line(item) for item in sorted(coll_items, key=lambda i: i.timestamp or _MIN_TIMESTAMP)]
+    lines += [_item_line(item) for item in sorted(coll_items, key=_sort_timestamp)]
 
     (notes_dir / f"{slug}.md").write_text("\n".join(lines), encoding="utf-8")
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cartography.config import Settings
 from cartography.schema import ClusteredItem, ItemType, SourcePlatform
@@ -188,6 +188,21 @@ def test_build_map_defaults_to_clusters_tab_when_no_conversations(tmp_path):
 
     rendered = path.read_text(encoding="utf-8")
     assert '<div class="cg-tab cg-tab-active" data-tab="clusters">' in rendered
+
+
+def test_build_map_timeline_handles_naive_and_aware_timestamps_in_one_thread(tmp_path):
+    # Messenger's HTML export format stamps naive datetimes; JSON exports
+    # stamp UTC-aware ones. A real thread can mix both — comparing them
+    # directly raises TypeError (see KnowledgeItem.comparable_timestamp).
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        _message("a", "t1", "Group", "Someone", "aware", datetime(2021, 7, 13, 10, 0, tzinfo=timezone.utc)),
+        _message("b", "t1", "Group", "Someone", "naive", datetime(2021, 7, 13, 11, 0)),
+    ]
+
+    path = build_map(items, settings)
+
+    assert path.exists()
 
 
 def test_build_map_timeline_excludes_items_without_timestamp(tmp_path):

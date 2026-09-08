@@ -60,7 +60,7 @@ def stats() -> dict:
     items = _visible_items(_get_items())
     clusters = {item.cluster_id for item in items if item.cluster_id != -1}
     collections = {name for item in items for name in item.collections}
-    timestamps = [item.timestamp for item in items if item.timestamp]
+    timestamps = [item.comparable_timestamp for item in items if item.comparable_timestamp]
     return {
         "total_items": len(items),
         "total_clusters": len(clusters),
