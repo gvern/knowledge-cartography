@@ -27,6 +27,14 @@ _TEXT_SECONDARY = "#c3c2b7"
 _TEXT_MUTED = "#898781"
 _ACCENT = "#3987e5"  # categorical slot 1 (blue) — HUD chrome accent, not data
 _HAIRLINE = "#2c2c2a"
+# Sequential blue ramp (dataviz skill palette.md) — decorative depth/glow only,
+# never assigned to a platform, so it can't be mistaken for a 4th data hue.
+_EDGE_COLOR = "#5598e7"  # step 350 — softer than the flat accent for constellation threads
+_GLOW_COLOR = "#86b6ef"  # step 250 — the anchor halo
+# Categorical slot 4 (yellow/gold), otherwise unused by any platform — reserved
+# here purely as a UI selection/match indicator, never a data identity, so it
+# can't collide with the 3-hue platform encoding.
+_HIGHLIGHT_COLOR = "#c98500"
 
 _PLATFORM_COLORS: dict[SourcePlatform, str] = {
     SourcePlatform.INSTAGRAM: "#3987e5",  # slot 1 blue
@@ -71,6 +79,7 @@ def build_map(
     edges_trace = _constellation_trace(summaries)
     if edges_trace is not None:
         fig.add_trace(edges_trace)
+    fig.add_trace(_anchor_glow_trace(summaries.values()))
     fig.add_trace(_anchor_trace(summaries.values()))
     fig.add_trace(_collection_highlight_trace())
 
@@ -87,8 +96,14 @@ def build_map(
         showlegend=True,
         legend=dict(
             itemsizing="constant",
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(color=_TEXT_SECONDARY),
+            bgcolor="rgba(13,13,13,0.55)",
+            bordercolor=_HAIRLINE,
+            borderwidth=1,
+            font=dict(color=_TEXT_SECONDARY, size=12),
+            x=0.99,
+            y=0.93,
+            xanchor="right",
+            yanchor="top",
         ),
         paper_bgcolor=_PAGE,
         autosize=True,
@@ -154,10 +169,10 @@ def _platform_trace(
         showlegend=not is_noise,
         legendgroup=platform_name,
         marker=dict(
-            size=3 if is_noise else 5,
-            opacity=0.25 if is_noise else 0.8,
+            size=2.5 if is_noise else 6,
+            opacity=0.16 if is_noise else 0.85,
             color=color,
-            line=dict(width=0.3, color=_SURFACE),
+            line=dict(width=0.4, color=_SURFACE),
         ),
         text=[_hover_text(item) for item in items],
         hoverinfo="text",
@@ -165,8 +180,27 @@ def _platform_trace(
     )
 
 
+def _anchor_glow_trace(cluster_values) -> go.Scatter3d:
+    """A larger, faint duplicate of the anchor beacons rendered *underneath*
+    them (added to the figure first) — Plotly has no blur/bloom filter, so a
+    wide low-opacity marker at the same position fakes a soft halo instead."""
+    clusters: list[dict] = list(cluster_values)
+    return go.Scatter3d(
+        x=[c["cx"] for c in clusters],
+        y=[c["cy"] for c in clusters],
+        z=[c["cz"] for c in clusters],
+        mode="markers",
+        name="cluster-anchor-glow",
+        showlegend=False,
+        hoverinfo="skip",
+        marker=dict(symbol="circle", size=22, color=_GLOW_COLOR, opacity=0.12),
+    )
+
+
 def _anchor_trace(cluster_values) -> go.Scatter3d:
-    """One clickable beacon per cluster centroid — the on-map selection target."""
+    """One clickable beacon per cluster centroid — the on-map selection target.
+    Sized to the dataviz skill's marker floor (>=8px) since, unlike the dense
+    item cloud, there are only ever a few hundred of these."""
     clusters: list[dict] = list(cluster_values)
     return go.Scatter3d(
         x=[c["cx"] for c in clusters],
@@ -180,9 +214,9 @@ def _anchor_trace(cluster_values) -> go.Scatter3d:
         hoverinfo="text",
         marker=dict(
             symbol="diamond",
-            size=6,
+            size=9,
             color=_ACCENT,
-            opacity=0.9,
+            opacity=0.95,
             line=dict(width=1, color=_TEXT_PRIMARY),
         ),
     )
@@ -229,8 +263,8 @@ def _constellation_trace(summaries: dict[int, dict]) -> go.Scatter3d | None:
         name="constellation-edges",
         showlegend=False,
         hoverinfo="skip",
-        line=dict(width=1.5, color=_ACCENT),
-        opacity=0.22,
+        line=dict(width=1.6, color=_EDGE_COLOR),
+        opacity=0.3,
     )
 
 
@@ -239,7 +273,9 @@ def _collection_highlight_trace() -> go.Scatter3d:
     collection is selected. Collections are the user's own curation and aren't
     spatially coherent the way an HDBSCAN cluster is, so instead of zooming to
     a (possibly huge, scattered) bounding box, selected items are highlighted
-    in place across the whole map.
+    in place across the whole map. Gold, not white — distinct from the anchor
+    beacons' white ring, so "matched by search/collection" never reads as
+    "is a cluster center."
     """
     return go.Scatter3d(
         x=[],
@@ -252,7 +288,7 @@ def _collection_highlight_trace() -> go.Scatter3d:
         marker=dict(
             size=8,
             color="rgba(0,0,0,0)",
-            line=dict(width=2, color=_TEXT_PRIMARY),
+            line=dict(width=2.2, color=_HIGHLIGHT_COLOR),
         ),
     )
 
@@ -369,7 +405,13 @@ def _build_timeline_figure(items: list[ClusteredItem], conversations: dict[str, 
         xaxis=dict(color=_TEXT_SECONDARY, gridcolor=_HAIRLINE, zeroline=False),
         yaxis=dict(visible=False, categoryorder="array", categoryarray=ordered_ids),
         showlegend=True,
-        legend=dict(itemsizing="constant", bgcolor="rgba(0,0,0,0)", font=dict(color=_TEXT_SECONDARY)),
+        legend=dict(
+            itemsizing="constant",
+            bgcolor="rgba(13,13,13,0.55)",
+            bordercolor=_HAIRLINE,
+            borderwidth=1,
+            font=dict(color=_TEXT_SECONDARY, size=12),
+        ),
         paper_bgcolor=_PAGE,
         plot_bgcolor=_SURFACE,
         autosize=True,
@@ -402,18 +444,21 @@ def _timeline_hover(item: ClusteredItem) -> str:
 
 
 def _cluster_annotation(cluster: dict) -> dict:
+    # Text in a primary-ink token, not the accent — legibility over branding
+    # (dataviz skill: labels never wear the data/accent color); the accent
+    # border still carries the "this is a cluster" identity.
     return dict(
         x=cluster["cx"],
         y=cluster["cy"],
         z=cluster["cz"],
         text=html.escape(cluster["label"]),
         showarrow=False,
-        font=dict(color=_ACCENT, size=11, family="system-ui, -apple-system, sans-serif"),
-        bgcolor="rgba(13,13,13,0.65)",
-        bordercolor="rgba(57,135,229,0.4)",
+        font=dict(color=_TEXT_PRIMARY, size=11, family="system-ui, -apple-system, sans-serif"),
+        bgcolor="rgba(13,13,13,0.78)",
+        bordercolor="rgba(57,135,229,0.55)",
         borderwidth=1,
-        borderpad=3,
-        opacity=0.9,
+        borderpad=4,
+        opacity=0.92,
     )
 
 
@@ -552,18 +597,14 @@ def _render_page(
     flex-direction: column;
     position: relative;
   }}
-  body::before {{
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(ellipse at 50% 40%, rgba(57, 135, 229, 0.06), transparent 60%);
-    z-index: 0;
-  }}
   @keyframes cg-pulse {{
     0%, 100% {{ text-shadow: 0 0 10px var(--accent-glow); }}
     50% {{ text-shadow: 0 0 20px var(--accent-glow), 0 0 34px var(--accent-glow); }}
   }}
+  /* The plot's own paper_bgcolor is opaque and fills its whole container, so a
+  page-level ambient background would sit entirely behind it — invisible. The
+  header (and aside, further down) are the only chrome actually on top of it;
+  the ambiance lives there instead. */
   header {{
     padding: 14px 20px;
     border-bottom: 1px solid var(--hairline);
@@ -573,6 +614,10 @@ def _render_page(
     flex-shrink: 0;
     position: relative;
     z-index: 1;
+    background:
+      radial-gradient(ellipse at 15% 0%, rgba(144, 133, 233, 0.08), transparent 65%),
+      radial-gradient(ellipse at 90% 100%, rgba(57, 135, 229, 0.06), transparent 60%),
+      var(--page);
   }}
   header h1 {{
     font-size: 15px;
@@ -616,15 +661,19 @@ def _render_page(
     width: 100%;
     height: 100%;
   }}
+  @keyframes cg-corner-breathe {{
+    0%, 100% {{ opacity: 0.4; }}
+    50% {{ opacity: 0.75; }}
+  }}
   .cg-corner {{
     position: absolute;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border: 2px solid var(--accent);
-    opacity: 0.55;
     pointer-events: none;
     z-index: 2;
-    filter: drop-shadow(0 0 4px var(--accent-glow));
+    filter: drop-shadow(0 0 5px var(--accent-glow));
+    animation: cg-corner-breathe 5s ease-in-out infinite;
   }}
   .cg-corner-tl {{ top: 10px; left: 10px; border-right: none; border-bottom: none; }}
   .cg-corner-tr {{ top: 10px; right: 10px; border-left: none; border-bottom: none; }}
@@ -636,7 +685,9 @@ def _render_page(
     border-left: 1px solid var(--hairline);
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background:
+      radial-gradient(ellipse at 100% 0%, rgba(144, 133, 233, 0.06), transparent 45%),
+      var(--surface);
   }}
   .cg-tabs {{
     display: flex;
@@ -870,7 +921,9 @@ def _render_page(
   const CG_COLLECTIONS = {json.dumps(collection_data)};
   const CG_CONVERSATIONS = {json.dumps(conversation_data)};
   const CG_DEFAULT_TAB = {json.dumps(default_tab)};
-  const CG_NON_ITEM_TRACES = new Set(["cluster-anchors", "collection-highlight", "constellation-edges"]);
+  const CG_NON_ITEM_TRACES = new Set([
+    "cluster-anchors", "cluster-anchor-glow", "collection-highlight", "constellation-edges",
+  ]);
   const plotDiv = document.getElementById("cg-plot");
   const timelineDiv = document.getElementById("cg-timeline-plot");
   const searchInput = document.getElementById("cg-search");
