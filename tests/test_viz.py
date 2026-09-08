@@ -287,6 +287,48 @@ def test_build_map_draws_constellation_edges_between_clusters(tmp_path):
     assert "constellation-edges" in rendered
 
 
+def test_build_map_defers_non_default_tab_figure_when_conversations_present(tmp_path):
+    # Eagerly building both a large 3D map and a same-scale timeline at once
+    # is what crashed the tab on a real dataset — the non-default tab's
+    # figure must ship inert (deferred) and only activate on first switch.
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        _message("a", "t1", "Group", "Someone", "hi", datetime(2021, 7, 13, 10, 0)),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert 'id="cg-plot-script"' in rendered  # map (non-default here) is deferred
+    assert 'type="text/plotly-deferred"' in rendered
+    assert 'id="cg-timeline-plot-script"' not in rendered  # timeline is the default tab — eager
+    assert "function ensureMapReady" in rendered
+    assert "function ensureTimelineReady" in rendered
+    assert "function activateDeferredScript" in rendered
+
+
+def test_build_map_defers_timeline_figure_when_no_conversations(tmp_path):
+    settings = Settings(output_dir=tmp_path / "output")
+    items = [
+        ClusteredItem(
+            id="a",
+            source=SourcePlatform.BOOKMARK,
+            item_type=ItemType.BOOKMARK,
+            title="Example",
+            cluster_id=0,
+            cluster_label="Cooking",
+            x=0.1,
+            y=0.2,
+        ),
+    ]
+
+    path = build_map(items, settings)
+
+    rendered = path.read_text(encoding="utf-8")
+    assert 'id="cg-timeline-plot-script"' in rendered  # timeline (non-default here) is deferred
+    assert 'id="cg-plot-script"' not in rendered  # map is the default tab — loaded eagerly
+
+
 def test_build_map_writes_inspector_panel_markup(tmp_path):
     settings = Settings(output_dir=tmp_path / "output")
     items = [

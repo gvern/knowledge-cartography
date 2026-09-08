@@ -41,6 +41,16 @@ _NOISE_COLOR = "#4a4a47"  # muted, off the categorical set — "no cluster", not
 _MAX_DIRECT_LABELS = 40
 
 
+def _defer_script(html: str, script_id: str) -> str:
+    """Swap `to_html`'s single executable `<script>` (present exactly once
+    when `include_plotlyjs=False`, confirmed by inspection of Plotly's own
+    output) for an inert one carrying an id — the browser parses it but
+    never executes it (unrecognized `type`), so neither the JSON payload
+    gets deserialized nor the WebGL/SVG figure gets built, until the
+    tab-switch JS below explicitly re-activates it by id."""
+    return html.replace("<script>", f'<script type="text/plotly-deferred" id="{script_id}">', 1)
+
+
 def build_map(
     items: list[ClusteredItem], settings: Settings, output_name: str = "knowledge_map.html"
 ) -> Path:
@@ -92,28 +102,39 @@ def build_map(
         "displaylogo": False,
         "responsive": True,
     }
-    plot_html = fig.to_html(
-        include_plotlyjs="cdn",
-        config=config,
-        full_html=False,
-        default_width="100%",
-        default_height="100%",
-        div_id="cg-plot",
-    )
 
     conversations = _conversation_summaries(items)
     timeline_fig = _build_timeline_figure(items, conversations)
-    timeline_html = timeline_fig.to_html(
-        include_plotlyjs=False,
-        config=config,
-        full_html=False,
-        default_width="100%",
-        default_height="100%",
-        div_id="cg-timeline-plot",
-    )
+    # Whichever tab isn't shown first loads its data but doesn't build the
+    # actual Plotly figure (WebGL buffers, hover/SVG layers) until the user
+    # switches to it — see the deferred-script trick below and the tab-switch
+    # JS. Eagerly building BOTH a 250k-point 3D scene and a same-scale 2D
+    # timeline at once is enough to crash the tab outright on a real dataset
+    # this size; only one is ever needed at a time.
+    default_tab = "conversations" if conversations else "clusters"
+
+    def _html(figure: go.Figure, div_id: str, *, eager: bool) -> str:
+        html = figure.to_html(
+            include_plotlyjs="cdn" if eager else False,
+            config=config,
+            full_html=False,
+            default_width="100%",
+            default_height="100%",
+            div_id=div_id,
+        )
+        return html if eager else _defer_script(html, f"{div_id}-script")
+
+    plot_html = _html(fig, "cg-plot", eager=default_tab == "clusters")
+    timeline_html = _html(timeline_fig, "cg-timeline-plot", eager=default_tab == "conversations")
 
     page = _render_page(
-        plot_html, timeline_html, summaries, collections, conversations, total_items=len(items)
+        plot_html,
+        timeline_html,
+        summaries,
+        collections,
+        conversations,
+        total_items=len(items),
+        default_tab=default_tab,
     )
     output_path = settings.output_dir / output_name
     output_path.write_text(page, encoding="utf-8")
@@ -441,6 +462,7 @@ def _render_page(
     collections: dict[str, dict],
     conversations: dict[str, dict],
     total_items: int,
+    default_tab: str,
 ) -> str:
     rows = sorted(summaries.values(), key=lambda c: -c["count"])
     sidebar_data = [
@@ -494,10 +516,6 @@ def _render_page(
         f'<span class="cg-row-count">{c["count"]}</span></li>'
         for i, c in enumerate(conversation_rows_data)
     )
-
-    # No conversation data (no Messenger — or similar — items ingested): default
-    # to the clusters tab rather than an empty timeline.
-    default_tab = "conversations" if conversation_data else "clusters"
 
     def tab_class(name: str) -> str:
         return "cg-tab cg-tab-active" if name == default_tab else "cg-tab"
@@ -851,6 +869,8 @@ def _render_page(
   const CG_CLUSTERS = {json.dumps(sidebar_data)};
   const CG_COLLECTIONS = {json.dumps(collection_data)};
   const CG_CONVERSATIONS = {json.dumps(conversation_data)};
+  const CG_DEFAULT_TAB = {json.dumps(default_tab)};
+  const CG_NON_ITEM_TRACES = new Set(["cluster-anchors", "collection-highlight", "constellation-edges"]);
   const plotDiv = document.getElementById("cg-plot");
   const timelineDiv = document.getElementById("cg-timeline-plot");
   const searchInput = document.getElementById("cg-search");
@@ -860,17 +880,82 @@ def _render_page(
   const conversationRows = document.querySelectorAll("#cg-list-conversations .cg-row");
   const clustersById = new Map(CG_CLUSTERS.map((c) => [c.id, c]));
   const collectionsByName = new Map(CG_COLLECTIONS.map((c, i) => [c.name, i]));
-  const highlightTraceIndex = plotDiv.data.findIndex((t) => t.name === "collection-highlight");
 
-  // Plotly's own embedded init script runs the moment the parser reaches it —
-  // before the sidebar further down in the document has been parsed, so a 3D
-  // scene sizes itself off the pre-flex (full-window) container width and
-  // visually overlaps the sidebar. This script tag runs last (after the whole
-  // document, sidebar included, is parsed and laid out), so re-measuring here
-  // catches the real, flex-resolved size.
-  Plotly.Plots.resize(plotDiv);
+  // The map (3D, hundreds of thousands of points) and the timeline (same
+  // scale) are each expensive to build — eagerly building both at once was
+  // enough to crash the tab outright on a real dataset. Whichever isn't the
+  // default tab ships as an inert <script type="text/plotly-deferred"> (see
+  // _defer_script in viz.py) that only gets executed — and only then is its
+  // one-time setup (search index, click handler) built — the first time its
+  // tab is actually opened.
+  let mapReady = false;
+  let timelineReady = false;
+  let highlightTraceIndex = -1;
+  const searchIndex = [];
+
+  function activateDeferredScript(scriptId) {{
+    const el = document.getElementById(scriptId);
+    if (!el) return; // already eager-loaded — nothing to activate
+    const script = document.createElement("script");
+    script.textContent = el.textContent;
+    el.replaceWith(script);
+  }}
+
+  function ensureMapReady() {{
+    if (mapReady) return;
+    mapReady = true;
+    activateDeferredScript("cg-plot-script");
+    highlightTraceIndex = plotDiv.data.findIndex((t) => t.name === "collection-highlight");
+    // Full-text search index: built once from data already loaded for hover/click,
+    // no extra payload — every point's full text already ships in its customdata.
+    plotDiv.data.forEach((trace) => {{
+      if (CG_NON_ITEM_TRACES.has(trace.name)) return;
+      (trace.customdata || []).forEach((detail, i) => {{
+        if (detail && typeof detail === "object" && detail.text) {{
+          searchIndex.push(
+            {{ x: trace.x[i], y: trace.y[i], z: trace.z[i], text: detail.text.toLowerCase() }}
+          );
+        }}
+      }});
+    }});
+    plotDiv.on("plotly_click", (eventdata) => {{
+      const points = eventdata.points || [];
+      const anchorPoint = points.find((p) => p.data.name === "cluster-anchors");
+      if (anchorPoint) {{
+        const cluster = clustersById.get(anchorPoint.customdata);
+        if (cluster) zoomToCluster(cluster);
+        return;
+      }}
+      // The highlight ring can sit on top of the real point at the same coordinates —
+      // scan all overlapping points for one with real detail rather than trusting points[0].
+      const detailPoint = points.find(
+        (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
+      );
+      if (detailPoint) openInspector(detailPoint.customdata);
+    }});
+    // Plotly's own embedded init script runs the moment the parser reaches it (or,
+    // for a lazily-activated one, the moment activateDeferredScript runs it above) —
+    // possibly before the sidebar/flex layout has settled, so a 3D scene can size
+    // itself off a stale (e.g. pre-flex, full-window) container width. Re-measuring
+    // here, after that's guaranteed to have happened, catches the real size.
+    Plotly.Plots.resize(plotDiv);
+  }}
+
+  function ensureTimelineReady() {{
+    if (timelineReady) return;
+    timelineReady = true;
+    activateDeferredScript("cg-timeline-plot-script");
+    timelineDiv.on("plotly_click", (eventdata) => {{
+      const detailPoint = (eventdata.points || []).find(
+        (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
+      );
+      if (detailPoint) openInspector(detailPoint.customdata);
+    }});
+    Plotly.Plots.resize(timelineDiv);
+  }}
 
   function zoomToCluster(c) {{
+    ensureMapReady();
     const padX = Math.max((c.x1 - c.x0) * 0.4, 0.5);
     const padY = Math.max((c.y1 - c.y0) * 0.4, 0.5);
     const padZ = Math.max((c.z1 - c.z0) * 0.4, 0.5);
@@ -886,6 +971,7 @@ def _render_page(
   // idx — isolate one row by range, and zoom x to that thread's own span
   // (with a floor so a single-message thread still gets a visible window).
   function zoomToConversation(c) {{
+    ensureTimelineReady();
     const first = new Date(c.first).getTime();
     const last = new Date(c.last).getTime();
     const padMs = Math.max((last - first) * 0.15, 1000 * 60 * 60 * 24);
@@ -899,9 +985,11 @@ def _render_page(
   // Neither is spatially coherent the way an HDBSCAN cluster is, so matches are
   // highlighted in place across the whole map rather than zoomed to.
   function clearHighlight() {{
+    ensureMapReady();
     Plotly.restyle(plotDiv, {{ x: [[]], y: [[]], z: [[]] }}, [highlightTraceIndex]);
   }}
   function setHighlight(xs, ys, zs) {{
+    ensureMapReady();
     Plotly.restyle(plotDiv, {{ x: [xs], y: [ys], z: [zs] }}, [highlightTraceIndex]);
   }}
 
@@ -943,6 +1031,7 @@ def _render_page(
     const showTimeline = tabName === "conversations";
     timelineViewport.classList.toggle("cg-tab-hidden", !showTimeline);
     mapViewport.classList.toggle("cg-tab-hidden", showTimeline);
+    if (showTimeline) {{ ensureTimelineReady(); }} else {{ ensureMapReady(); }}
     Plotly.Plots.resize(showTimeline ? timelineDiv : plotDiv);
   }}
   tabs.forEach((tab) => {{
@@ -953,19 +1042,6 @@ def _render_page(
     }});
   }});
 
-  // --- full-text search index: built once from data already loaded for hover/click,
-  // no extra payload — every point's full text already ships in its customdata. ---
-  const CG_NON_ITEM_TRACES = new Set(["cluster-anchors", "collection-highlight", "constellation-edges"]);
-  const searchIndex = [];
-  plotDiv.data.forEach((trace) => {{
-    if (CG_NON_ITEM_TRACES.has(trace.name)) return;
-    (trace.customdata || []).forEach((detail, i) => {{
-      if (detail && typeof detail === "object" && detail.text) {{
-        searchIndex.push({{ x: trace.x[i], y: trace.y[i], z: trace.z[i], text: detail.text.toLowerCase() }});
-      }}
-    }});
-  }});
-
   function runSearch(query) {{
     const q = query.trim().toLowerCase();
     if (q.length < 2) {{
@@ -973,6 +1049,7 @@ def _render_page(
       if (activeCollectionIdx === null) clearHighlight();
       return;
     }}
+    ensureMapReady();
     deselectCollection();
     const matches = searchIndex.filter((entry) => entry.text.includes(q));
     const n = matches.length;
@@ -1063,28 +1140,11 @@ def _render_page(
     inspector.classList.remove("cg-inspector-visible");
   }});
 
-  plotDiv.on("plotly_click", (eventdata) => {{
-    const points = eventdata.points || [];
-    const anchorPoint = points.find((p) => p.data.name === "cluster-anchors");
-    if (anchorPoint) {{
-      const cluster = clustersById.get(anchorPoint.customdata);
-      if (cluster) zoomToCluster(cluster);
-      return;
-    }}
-    // The highlight ring can sit on top of the real point at the same coordinates —
-    // scan all overlapping points for one with real detail rather than trusting points[0].
-    const detailPoint = points.find(
-      (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
-    );
-    if (detailPoint) openInspector(detailPoint.customdata);
-  }});
-
-  timelineDiv.on("plotly_click", (eventdata) => {{
-    const detailPoint = (eventdata.points || []).find(
-      (p) => p.customdata && typeof p.customdata === "object" && p.customdata.text !== undefined
-    );
-    if (detailPoint) openInspector(detailPoint.customdata);
-  }});
+  // Whichever tab is shown first already has its (non-deferred) Plotly figure
+  // built by the time this script runs — this just runs its one-time setup
+  // (search index, click handler). The other tab's figure is built lazily,
+  // the first time activateTab() switches to it.
+  if (CG_DEFAULT_TAB === "clusters") {{ ensureMapReady(); }} else {{ ensureTimelineReady(); }}
 </script>
 </body>
 </html>
