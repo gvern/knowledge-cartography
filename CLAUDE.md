@@ -37,6 +37,14 @@ NAS mount to persist outside local disk — reachable over Tailscale in this set
 
 Local embeddings require `ollama serve` running with the `nomic-embed-text` model pulled.
 
+`CARTOGRAPHY_OLLAMA_CHAT_MODEL` (default `llama3.1:8b`, must already be pulled)
+names a local chat model used to label clusters `label.py`'s Anthropic path
+can't safely see — chiefly Messenger-only clusters, where raw TF-IDF keywords
+("Https / Www / Soirée") were the only prior fallback and read as noise, not a
+topic. Empty string disables it (straight to keyword labels). See the
+Messenger policy bullet below for why this is the right place for that model,
+not the Anthropic one.
+
 ## Structure
 
 ```
@@ -46,7 +54,7 @@ src/cartography/
 ├── schema.py           # KnowledgeItem / ClusteredItem (pydantic)
 ├── embed.py             # Ollama or Vertex AI -> ChromaDB
 ├── cluster.py             # UMAP + HDBSCAN
-├── label.py                 # cluster naming via the Anthropic API + shared keyword_tags()
+├── label.py                 # cluster naming: Anthropic -> local Ollama chat -> keyword_tags()
 ├── viz.py                    # Plotly 3D HTML map (Scatter3d + constellation edges)
 ├── export.py                  # JSON graph (nodes/edges/clusters) + Markdown vault
 ├── mcp_server.py               # MCP server: live tool access to the graph for an agent
@@ -72,9 +80,13 @@ tests/                                # mirrors src/, one test module per ingest
 - `SourcePlatform.MESSENGER` items are private-by-policy: `embed.py` always
   routes them through Ollama regardless of the configured embedding
   provider, and `label.py` never includes their text in a cluster-labeling
-  API call, even in a cluster mixed with non-Messenger items. If you add
-  another sensitive source (e.g. iMessage/WhatsApp), give it the same
-  treatment rather than a one-off — see docs/ARCHITECTURE.md.
+  API call, even in a cluster mixed with non-Messenger items. Labeling still
+  wants their text, though — `label.py`'s `LocalLabeler` covers that with a
+  local Ollama *chat* model (`CARTOGRAPHY_OLLAMA_CHAT_MODEL`, separate from
+  the embedding model), the one path allowed to see it, before falling back
+  to keyword extraction. If you add another sensitive source (e.g.
+  iMessage/WhatsApp), give it the same treatment rather than a one-off — see
+  docs/ARCHITECTURE.md.
 - `export.py`'s JSON graph and Markdown vault stay purely local file writes
   (like the HTML map already is) — they carry the same per-item text that's
   already embedded in the map's page data, just reshaped, so no additional

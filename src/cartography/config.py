@@ -21,6 +21,12 @@ class Settings(BaseSettings):
 
     anthropic_model: str = "claude-opus-5"
     anthropic_api_key: str | None = None
+    # Local (never leaves the machine) cluster-labeling model — the fallback
+    # ahead of raw keywords for clusters the Anthropic path can't or won't see
+    # (Messenger-only ones), and for everything when no Anthropic key is set.
+    # Empty string disables it (straight to keyword labels). Must already be
+    # pulled (`ollama pull <model>`) — see CLAUDE.md.
+    ollama_chat_model: str = "llama3.1:8b"
 
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1

@@ -24,7 +24,7 @@ src/cartography/
 ├── schema.py         # KnowledgeItem + ClusteredItem (Pydantic)
 ├── embed.py           # Ollama ou Vertex AI -> ChromaDB
 ├── cluster.py          # UMAP + HDBSCAN
-├── label.py              # nommage automatique des clusters via l'API Claude + mots-clés
+├── label.py              # nommage des clusters : API Claude -> LLM local Ollama -> mots-clés
 ├── viz.py                 # carte HTML 3D interactive (Plotly Scatter3d + constellation)
 ├── export.py               # graphe JSON (nodes/edges/clusters) + vault Markdown
 ├── mcp_server.py            # serveur MCP : accès en direct au graphe pour un agent
@@ -67,7 +67,10 @@ cartography ingest \
 
 # Messenger (optionnel) : contenu privé, jamais envoyé à l'API Claude pour le
 # labeling, toujours embeddé localement via Ollama quel que soit le provider
-# configuré — voir docs/ARCHITECTURE.md
+# configuré — voir docs/ARCHITECTURE.md. Le nommage des clusters Messenger
+# passe par un modèle de chat Ollama LOCAL (CARTOGRAPHY_OLLAMA_CHAT_MODEL,
+# ex. llama3.1:8b) plutôt qu'un simple comptage de mots-clés — bien plus
+# lisible sur des messages, tout en restant 100% local.
 cartography ingest --messenger ~/data/facebook
 
 # Clustering + génération de la carte

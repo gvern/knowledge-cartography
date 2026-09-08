@@ -24,6 +24,17 @@ Here are up to {n} representative items from the cluster:
 Reply with ONLY a short (2-5 word) descriptive label for this cluster's overarching topic. \
 No punctuation, no explanation."""
 
+_MESSAGE_PROMPT = """You are labeling a cluster of private chat messages that a semantic \
+clustering algorithm grouped together because they are topically similar. This analysis is \
+entirely local — nothing here leaves this machine.
+
+Here are up to {n} representative messages from the cluster:
+
+{samples}
+
+Reply with ONLY a short (2-5 word) descriptive label for what this cluster of messages is \
+about — the topic or theme, not a quote, not a person's name. No punctuation, no explanation."""
+
 
 def label_clusters(
     items: list[ClusteredItem], settings: Settings, samples_per_cluster: int = 12
@@ -32,25 +43,37 @@ def label_clusters(
     for item in items:
         by_cluster[item.cluster_id].append(item)
 
-    # Always computed, never a network call — the fallback for clusters the
-    # API path can't or won't label (no key, no cloud-safe samples, a failed
+    # Always computed, never a network call — the final fallback for clusters
+    # neither model path can or will label (no key, no model pulled, a failed
     # call), not just an afterthought for the all-Messenger case.
     local_labels = _local_keyword_labels(by_cluster)
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key) if settings.anthropic_api_key else None
     if client is None:
-        logger.warning("No Anthropic API key configured; using local keyword labels for every cluster")
+        logger.warning("No Anthropic API key configured; falling back to local labeling for every cluster")
+
+    # Second tier, ahead of raw keywords: a local Ollama chat model, the only
+    # path allowed to see actual Messenger text (same reasoning as embed.py's
+    # Messenger routing — Ollama never leaves the machine). Used for clusters
+    # Claude can't see any safe samples for, and for every cluster when no
+    # Anthropic key is configured at all.
+    local_llm = (
+        LocalLabeler(settings.ollama_chat_model, settings.ollama_host) if settings.ollama_chat_model else None
+    )
 
     labels: dict[int, str] = {-1: "Unclustered"}
     for cluster_id, cluster_items in by_cluster.items():
         if cluster_id == -1:
             continue
         fallback = local_labels.get(cluster_id, f"Cluster {cluster_id}")
-        labels[cluster_id] = (
-            _label_one(client, settings, cluster_id, cluster_items, samples_per_cluster, fallback)
-            if client is not None
-            else fallback
-        )
+        if client is not None:
+            labels[cluster_id] = _label_one(
+                client, settings, cluster_id, cluster_items, samples_per_cluster, fallback, local_llm
+            )
+        elif local_llm is not None:
+            labels[cluster_id] = local_llm.label(cluster_id, cluster_items, samples_per_cluster, fallback)
+        else:
+            labels[cluster_id] = fallback
 
     for item in items:
         item.cluster_label = labels.get(item.cluster_id, f"Cluster {item.cluster_id}")
@@ -65,14 +88,18 @@ def _label_one(
     cluster_items: list[ClusteredItem],
     samples_per_cluster: int,
     fallback: str,
+    local_llm: LocalLabeler | None,
 ) -> str:
     # Messenger content never leaves the machine — not even a sample of it,
     # even when it shares a cluster with non-sensitive items. A cluster made
-    # up entirely of Messenger items ends up with no safe samples below, and
-    # falls back to a local keyword label rather than calling the API at all.
+    # up entirely of Messenger items ends up with no safe samples below; try
+    # the local model over the full (Messenger-inclusive) cluster instead of
+    # calling the API at all, falling back to keywords if that's unavailable too.
     safe_items = [item for item in cluster_items if item.source != SourcePlatform.MESSENGER]
     sample_texts = [item.text for item in safe_items[:samples_per_cluster] if item.text]
     if not sample_texts:
+        if local_llm is not None:
+            return local_llm.label(cluster_id, cluster_items, samples_per_cluster, fallback)
         return fallback
 
     samples = "\n".join(f"- {text[:200]}" for text in sample_texts)
@@ -97,6 +124,44 @@ def _label_one(
 
     logger.info("Cluster %d (%d items): %s", cluster_id, len(cluster_items), label)
     return label
+
+
+class LocalLabeler:
+    """Labels a cluster with a local Ollama chat model — better than raw
+    keyword frequency for chat-style text (slang, filler, short messages),
+    and, unlike the Anthropic path, safe to point at actual Messenger text
+    since Ollama never leaves the machine. Falls back to the TF-IDF keyword
+    label on any failure: model not pulled, Ollama not running, empty/odd
+    response — this is a nice-to-have upgrade, never a hard requirement."""
+
+    def __init__(self, model: str, host: str):
+        self.model = model
+        self.host = host
+
+    def label(
+        self, cluster_id: int, items: list[ClusteredItem], samples_per_cluster: int, fallback: str
+    ) -> str:
+        sample_texts = [item.text for item in items[:samples_per_cluster] if item.text]
+        if not sample_texts:
+            return fallback
+
+        samples = "\n".join(f"- {text[:200]}" for text in sample_texts)
+        prompt = _MESSAGE_PROMPT.format(n=len(sample_texts), samples=samples)
+        try:
+            import ollama
+
+            response = ollama.Client(host=self.host).chat(
+                model=self.model, messages=[{"role": "user", "content": prompt}]
+            )
+            label = response["message"]["content"].strip().strip("\"'“”")
+        except Exception:
+            logger.exception("Local LLM labeling failed for cluster %d (model %s)", cluster_id, self.model)
+            return fallback
+
+        if not label:
+            return fallback
+        logger.info("Cluster %d (%d items, local LLM): %s", cluster_id, len(items), label)
+        return label
 
 
 # French (the dominant language in this project's real data) + English function

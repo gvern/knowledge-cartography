@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import anthropic
+import ollama
 
 from cartography.config import Settings
 from cartography.label import _local_keyword_labels, keyword_tags, label_clusters
@@ -107,12 +108,74 @@ def test_label_one_excludes_messenger_samples_from_a_mixed_cluster(monkeypatch):
     assert "public article about hiking" in prompt
 
 
-def test_label_clusters_without_api_key_uses_local_labels_for_everything(monkeypatch):
-    settings = Settings(anthropic_api_key=None)
+def test_label_clusters_without_api_key_or_local_model_uses_keyword_labels(monkeypatch):
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="")
     items = [_item(0, "A great hiking trail")]
 
     result = label_clusters(items, settings)
 
+    assert result[0].cluster_label == "Great / Hiking / Trail"
+
+
+def _ollama_response(text: str) -> dict:
+    return {"message": {"content": text}}
+
+
+def test_label_one_uses_local_llm_for_messenger_only_cluster(monkeypatch):
+    settings = Settings(anthropic_api_key="fake-key", ollama_chat_model="llama3.1:8b")
+    items = [_item(0, "On se voit ce soir pour le film", source=SourcePlatform.MESSENGER)]
+
+    client = MagicMock()  # Anthropic — should never be called for an all-Messenger cluster
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kwargs: client)
+    ollama_client = MagicMock()
+    ollama_client.chat.return_value = _ollama_response("Movie night plans")
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    client.messages.create.assert_not_called()
+    assert result[0].cluster_label == "Movie night plans"
+    assert ollama_client.chat.call_args.kwargs["model"] == "llama3.1:8b"
+    prompt = ollama_client.chat.call_args.kwargs["messages"][0]["content"]
+    assert "On se voit ce soir pour le film" in prompt  # local model — Messenger text is safe here
+
+
+def test_local_llm_falls_back_to_keywords_on_failure(monkeypatch):
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="llama3.1:8b")
+    items = [_item(0, "A great hiking trail", source=SourcePlatform.MESSENGER)]
+
+    ollama_client = MagicMock()
+    ollama_client.chat.side_effect = ConnectionError("ollama not running")
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    assert result[0].cluster_label == "Great / Hiking / Trail"
+
+
+def test_label_clusters_uses_local_llm_for_every_cluster_without_api_key(monkeypatch):
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="llama3.1:8b")
+    items = [_item(0, "A public article about hiking")]  # not Messenger — still routed locally
+
+    ollama_client = MagicMock()
+    ollama_client.chat.return_value = _ollama_response("Hiking trails")
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    assert result[0].cluster_label == "Hiking trails"
+
+
+def test_label_clusters_disables_local_llm_when_chat_model_empty(monkeypatch):
+    settings = Settings(anthropic_api_key=None, ollama_chat_model="")
+    items = [_item(0, "A great hiking trail")]
+
+    ollama_client = MagicMock()
+    monkeypatch.setattr(ollama, "Client", lambda host: ollama_client)
+
+    result = label_clusters(items, settings)
+
+    ollama_client.chat.assert_not_called()
     assert result[0].cluster_label == "Great / Hiking / Trail"
 
 
